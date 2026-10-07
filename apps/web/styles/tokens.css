@@ -1,0 +1,66 @@
+/* DESIGN.md Tokens - Lembar Kerja Pabrik */
+:root {
+  --bg: #E6E9E7;
+  --surface: #F5F6F4;
+  --surface-sunk: #DCE0DD;
+  --ink: #1B2A2F;
+  --ink-muted: #55656A;
+  --rule: #C3CAC7;
+  --rule-strong: #8E9A98;
+  --action: #2B5C8C;
+  --action-ink: #FFFFFF;
+  --mark: #E2B007;
+  --mark-wash: #F6E7A8;
+  --ok: #3B7A57;
+  --warn: #A8691A;
+  --error: #A93A3A;
+  --error-wash: #F0D3D1;
+
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius: 2px;
+
+  --row-height: 28px;
+  --row-height-dense: 24px;
+  --row-height-loose: 36px;
+}
+
+[data-theme="dark"],
+.dark {
+  --bg: #172024;
+  --surface: #1E2A2F;
+  --surface-sunk: #141C1F;
+  --ink: #DCE3E1;
+  --ink-muted: #93A3A6;
+  --rule: #33444A;
+  --rule-strong: #587077;
+  --action: #6FA3D6;
+  --action-ink: #0F1A20;
+  --mark: #E8BE2E;
+  --mark-wash: #4A4018;
+  --ok: #6DBB8F;
+  --warn: #D99A4B;
+  --error: #E0807E;
+  --error-wash: #4A2A2A;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #172024;
+    --surface: #1E2A2F;
+    --surface-sunk: #141C1F;
+    --ink: #DCE3E1;
+    --ink-muted: #93A3A6;
+    --rule: #33444A;
+    --rule-strong: #587077;
+    --action: #6FA3D6;
+    --action-ink: #0F1A20;
+    --mark: #E8BE2E;
+    --mark-wash: #4A4018;
+    --ok: #6DBB8F;
+    --warn: #D99A4B;
+    --error: #E0807E;
+    --error-wash: #4A2A2A;
+  }
+}
