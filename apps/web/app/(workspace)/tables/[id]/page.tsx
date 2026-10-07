@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import {
   Undo2,
@@ -13,9 +13,12 @@ import {
   BarChart2,
   ShieldAlert,
   Code,
+  ChevronDown,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import { useWorkspaceStore } from "@/lib/store";
+import DataGrid, { GridColumn } from "@/components/DataGrid";
+import { CodeViewer } from "@/components/CodeEditor";
 
 interface ColumnProfile {
   name: string;
@@ -61,9 +64,9 @@ export default function TableDetailPage() {
   const [rows, setRows] = useState<unknown[][]>([]);
   const [profiles, setProfiles] = useState<ColumnProfile[]>([]);
   const [selectedColIndex, setSelectedColIndex] = useState<number>(0);
-  const [editingCell, setEditingCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
-  const [editValue, setEditValue] = useState<string>("");
   const [appliedNotification, setAppliedNotification] = useState<string | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [totalRows, setTotalRows] = useState<number>(0);
 
   // Load Table Data and Profiles
   useEffect(() => {
@@ -72,6 +75,7 @@ export default function TableDetailPage() {
         setColumns(res.columns);
         setColumnTypes(res.column_types);
         setRows(res.rows);
+        setTotalRows(res.total_rows);
         setStatusMetrics(res.total_rows, res.columns.length, `seluruh baris lokal (${res.total_rows})`);
       })
       .catch(() => {
@@ -115,41 +119,40 @@ export default function TableDetailPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [undo, redo]);
 
-  // Handle cell edit commit
-  const handleStartEdit = (rowIdx: number, colIdx: number, currentVal: unknown) => {
-    setEditingCell({ rowIdx, colIdx });
-    setEditValue(currentVal === null || currentVal === undefined ? "" : String(currentVal));
-  };
 
-  const handleCommitEdit = () => {
-    if (!editingCell) return;
-    const { rowIdx, colIdx } = editingCell;
-    const oldVal = rows[rowIdx][colIdx];
+  // Handle export to file
+
+  const handleExport = useCallback((fmt: string) => {
+    setShowExportMenu(false);
+    const url = `http://localhost:8000/api/files/export/${tableName}?fmt=${fmt}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${tableName}.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [tableName]);
+
+  // Handle cell edit via DataGrid
+  const handleCellEdit = useCallback(async (
+    rowIdx: number,
+    colIdx: number,
+    newValue: string,
+    oldValue: unknown
+  ) => {
     const colName = columns[colIdx];
     const rowId = (rows[rowIdx][0] as string | number) ?? rowIdx;
+    if (String(oldValue ?? "") === newValue) return;
 
-    if (String(oldVal) !== editValue) {
-      // Record change in zustand store
-      recordChange({
-        rowId,
-        column: colName,
-        oldValue: oldVal,
-        newValue: editValue,
-      });
-
-      // Update local grid state
-      const updatedRows = [...rows];
-      updatedRows[rowIdx] = [...updatedRows[rowIdx]];
-      updatedRows[rowIdx][colIdx] = editValue;
-      setRows(updatedRows);
-    }
-    setEditingCell(null);
-  };
+    recordChange({ rowId, column: colName, oldValue, newValue });
+    const updatedRows = [...rows];
+    updatedRows[rowIdx] = [...updatedRows[rowIdx]];
+    updatedRows[rowIdx][colIdx] = newValue;
+    setRows(updatedRows);
+  }, [columns, rows, recordChange]);
 
   const handleApplyChanges = async () => {
     if (pendingChanges.length === 0) return;
-
-    // Send edits to backend
     for (const change of pendingChanges) {
       try {
         await fetchApi(`/tables/${tableName}/edit`, {
@@ -165,7 +168,6 @@ export default function TableDetailPage() {
         console.error("Gagal menyimpan perubahan:", err);
       }
     }
-
     setAppliedNotification(`${pendingChanges.length} perubahan berhasil diterapkan ke DuckDB`);
     clearChanges();
     setTimeout(() => setAppliedNotification(null), 3000);
@@ -245,14 +247,31 @@ export default function TableDetailPage() {
             </button>
           </div>
 
-          {/* Export */}
-          <button
-            onClick={() => alert(`Mengekspor tabel ${tableName} ke Parquet/CSV...`)}
-            className="flex items-center gap-1 px-2.5 h-[26px] text-[12px] bg-[var(--surface)] border border-[var(--rule-strong)] text-[var(--ink)] hover:bg-[var(--surface-sunk)] rounded-[2px]"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Ekspor</span>
-          </button>
+          {/* Export with format dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu((v) => !v)}
+              id="export-menu-btn"
+              className="flex items-center gap-1 px-2.5 h-[26px] text-[12px] bg-[var(--surface)] border border-[var(--rule-strong)] text-[var(--ink)] hover:bg-[var(--surface-sunk)] rounded-[2px]"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Ekspor</span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {showExportMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--rule-strong)] rounded-[2px] shadow-lg z-50 py-1 min-w-[120px]">
+                {["csv", "tsv", "xlsx", "json", "parquet"].map((fmt) => (
+                  <button
+                    key={fmt}
+                    onClick={() => handleExport(fmt)}
+                    className="w-full text-left px-3 h-[28px] text-[12px] font-mono hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                  >
+                    .{fmt}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Apply Changes (Solid Primary) */}
           <button
@@ -299,100 +318,15 @@ export default function TableDetailPage() {
         {/* Main Content Area */}
         <div className="flex-1 bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] overflow-hidden flex flex-col">
           {activeTab === "data" && (
-            <div className="flex-1 overflow-auto">
-              <table className="w-full border-collapse text-[12.5px]">
-                {/* Sticky Header */}
-                <thead className="sticky top-0 bg-[var(--surface-sunk)] border-b border-[var(--rule)] z-10">
-                  <tr className="h-[28px]">
-                    <th className="w-[48px] px-2 text-center font-mono text-[11px] text-[var(--ink-muted)] border-r border-[var(--rule)] select-none">
-                      #
-                    </th>
-                    {columns.map((col, idx) => (
-                      <th
-                        key={col}
-                        onClick={() => setSelectedColIndex(idx)}
-                        className={`px-3 text-left font-mono font-medium border-r border-[var(--rule)] cursor-pointer select-none transition-colors ${
-                          selectedColIndex === idx
-                            ? "bg-[var(--surface)] text-[var(--action)]"
-                            : "text-[var(--ink)] hover:bg-[var(--surface)]"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{col}</span>
-                          <span className="text-[10px] font-mono px-1 py-0.2 bg-[var(--surface-sunk)] text-[var(--ink-muted)] rounded-[2px]">
-                            {columnTypes[idx]?.toLowerCase() || "txt"}
-                          </span>
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                {/* Rows */}
-                <tbody>
-                  {rows.map((row, rIdx) => (
-                    <tr
-                      key={rIdx}
-                      className="h-[28px] border-b border-[var(--rule)] hover:bg-[color-mix(in_srgb,var(--action)_6%,var(--surface))] transition-colors"
-                    >
-                      {/* Row Number */}
-                      <td className="w-[48px] px-2 text-center font-mono text-[11px] text-[var(--ink-muted)] bg-[var(--surface-sunk)] border-r border-[var(--rule)] select-none">
-                        {rIdx + 1}
-                      </td>
-
-                      {/* Cells */}
-                      {row.map((cell, cIdx) => {
-                        const isPending = isCellPending(rIdx, cIdx);
-                        const isEditing =
-                          editingCell?.rowIdx === rIdx && editingCell?.colIdx === cIdx;
-                        const isNum = typeof cell === "number";
-
-                        return (
-                          <td
-                            key={cIdx}
-                            onDoubleClick={() => handleStartEdit(rIdx, cIdx, cell)}
-                            className={`px-3 border-r border-[var(--rule)] relative select-text ${
-                              isPending
-                                ? "bg-[var(--mark-wash)]"
-                                : ""
-                            } ${isNum ? "text-right font-mono" : "text-left"}`}
-                          >
-                            {/* Pending change yellow triangle indicator */}
-                            {isPending && (
-                              <span className="absolute top-0 left-0 w-0 h-0 border-t-[6px] border-t-[var(--mark)] border-r-[6px] border-r-transparent" />
-                            )}
-
-                            {isEditing ? (
-                              <input
-                                autoFocus
-                                type="text"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onBlur={handleCommitEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") handleCommitEdit();
-                                  if (e.key === "Escape") setEditingCell(null);
-                                }}
-                                className="w-full h-[22px] px-1 bg-[var(--surface)] text-[var(--ink)] border border-[var(--action)] outline-none rounded-[1px]"
-                              />
-                            ) : cell === null || cell === undefined ? (
-                              <span className="italic text-[var(--ink-muted)] font-mono text-[11.5px]">
-                                NULL
-                              </span>
-                            ) : cell === "" ? (
-                              <span className="italic text-[var(--ink-muted)] font-mono text-[11.5px]">
-                                &quot;&quot;
-                              </span>
-                            ) : (
-                              <span>{String(cell)}</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <DataGrid
+                columns={columns.map((name, i) => ({ name, type: columnTypes[i] || "VARCHAR" } as GridColumn))}
+                rows={rows}
+                totalRows={totalRows}
+                editable
+                idColumnIndex={0}
+                onCellEdit={handleCellEdit}
+              />
             </div>
           )}
 
@@ -503,27 +437,33 @@ export default function TableDetailPage() {
           {/* Kode Tab */}
           {activeTab === "code" && (
             <div className="flex-1 p-4 overflow-auto">
-              <div className="max-w-[800px] flex flex-col gap-3">
+              <div className="max-w-[800px] flex flex-col gap-4">
                 <h3 className="font-semibold text-[14px] text-[var(--ink)]">
-                  Kode Setara (DuckDB &amp; Polars)
+                  Kode Setara — SQL &amp; Python
                 </h3>
-                <div className="bg-[var(--surface-sunk)] border border-[var(--rule-strong)] p-3 rounded-[2px] font-mono text-[12px] text-[var(--ink)]">
-                  <pre>{`-- Kueri SQL DuckDB
-SELECT * 
-FROM ${tableName}
-WHERE tanggal IS NOT NULL
-ORDER BY id ASC;`}</pre>
+                <div>
+                  <p className="text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-widest mb-2">SQL (DuckDB)</p>
+                  <CodeViewer
+                    language="sql"
+                    value={`-- Baca seluruh tabel dari workspace\nSELECT * FROM ${tableName}\nWHERE tanggal IS NOT NULL\nORDER BY id ASC;`}
+                    minHeight="100px"
+                  />
                 </div>
-                <div className="bg-[var(--surface-sunk)] border border-[var(--rule-strong)] p-3 rounded-[2px] font-mono text-[12px] text-[var(--ink)]">
-                  <pre>{`# Kode Python Polars
-import polars as pl
-
-df = pl.read_database_uri(
-    "SELECT * FROM ${tableName}",
-    uri="duckdb:///workspace.duckdb"
-)
-df_clean = df.filter(pl.col("tanggal").is_not_null())
-print(df_clean.head())`}</pre>
+                <div>
+                  <p className="text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-widest mb-2">Python (Polars)</p>
+                  <CodeViewer
+                    language="python"
+                    value={`import polars as pl\n\ndf = pl.read_database_uri(\n    "SELECT * FROM ${tableName}",\n    uri="duckdb:///workspace.duckdb"\n)\ndf_clean = df.filter(pl.col("tanggal").is_not_null())\nprint(df_clean.head())`}
+                    minHeight="140px"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-[var(--ink-muted)] uppercase tracking-widest mb-2">Python (pandas)</p>
+                  <CodeViewer
+                    language="python"
+                    value={`import pandas as pd\nimport duckdb\n\ncon = duckdb.connect("workspace.duckdb")\ndf = con.execute("SELECT * FROM ${tableName}").fetchdf()\nprint(df.head())`}
+                    minHeight="120px"
+                  />
                 </div>
               </div>
             </div>

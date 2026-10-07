@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine.workspace import get_engine
 from app.routes.connections import router as connections_router
+from app.routes.files import router as files_router
 from app.routes.overview import router as overview_router
 from app.routes.pipeline import router as pipeline_router
 from app.routes.query import router as query_router
@@ -40,6 +41,7 @@ app.include_router(tables_router, prefix="/api")
 app.include_router(query_router, prefix="/api")
 app.include_router(connections_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
+app.include_router(files_router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { GitBranch, Code, Play, Check, Copy, Eye } from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import { CodeViewer } from "@/components/CodeEditor";
 
 interface StepItem {
   id: string;
@@ -224,10 +225,13 @@ export default function PipelinesPage() {
             </button>
           </div>
 
-          <div className="p-3 bg-[var(--surface-sunk)] overflow-auto max-h-[400px]">
-            <pre className="font-mono text-[12.5px] text-[var(--ink)] whitespace-pre-wrap leading-relaxed">
-              {generatedCode[selectedCodeTab]}
-            </pre>
+          <div className="overflow-hidden">
+            <CodeViewer
+              language={selectedCodeTab === "sql" ? "sql" : "python"}
+              value={generatedCode[selectedCodeTab]}
+              minHeight="200px"
+              height="400px"
+            />
           </div>
         </div>
       )}

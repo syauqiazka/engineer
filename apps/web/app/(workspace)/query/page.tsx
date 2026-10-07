@@ -1,8 +1,18 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { Play, Download, Terminal, AlertCircle } from "lucide-react";
+import React, { useState, useCallback, useRef } from "react";
+import {
+  Play,
+  Download,
+  Terminal,
+  AlertCircle,
+  Clock,
+  Database,
+  ChevronDown,
+} from "lucide-react";
 import { fetchApi } from "@/lib/api";
+import CodeEditor from "@/components/CodeEditor";
+import DataGrid, { GridColumn } from "@/components/DataGrid";
 
 interface QueryResult {
   columns: string[];
@@ -13,48 +23,102 @@ interface QueryResult {
   scanned_bytes_estimate: number | null;
 }
 
+const DEFAULT_SQL = `SELECT 
+  kota,
+  kategori,
+  COUNT(*) AS jumlah_pesanan,
+  SUM(total_harga) AS omset_rp
+FROM pesanan_harian
+GROUP BY kota, kategori
+ORDER BY omset_rp DESC;`;
+
 export default function QueryPage() {
-  const [sql, setSql] = useState<string>(
-    "SELECT \n  kota,\n  kategori,\n  COUNT(*) as jumlah_pesanan,\n  SUM(total_harga) as omset_rp\nFROM pesanan_harian\nGROUP BY kota, kategori\nORDER BY omset_rp DESC;"
-  );
+  const [sql, setSql] = useState<string>(DEFAULT_SQL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
-  const handleRunQuery = useCallback(async () => {
-    if (!sql.trim()) return;
-    setLoading(true);
-    setError(null);
+  const handleRunQuery = useCallback(
+    async (sqlToRun?: string) => {
+      const query = sqlToRun ?? sql;
+      if (!query.trim()) return;
+      setLoading(true);
+      setError(null);
 
-    try {
-      const data = await fetchApi<QueryResult>("/query", {
-        method: "POST",
-        body: JSON.stringify({ sql }),
-      });
-      setResult(data);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg || "Gagal mengeksekusi kueri SQL");
-    } finally {
-      setLoading(false);
-    }
-  }, [sql]);
-
-  // Keyboard shortcut Ctrl+Enter
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        handleRunQuery();
+      try {
+        const data = await fetchApi<QueryResult>("/query", {
+          method: "POST",
+          body: JSON.stringify({ sql: query }),
+        });
+        setResult(data);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg || "Gagal mengeksekusi kueri SQL");
+      } finally {
+        setLoading(false);
       }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleRunQuery]);
+    },
+    [sql]
+  );
+
+  const handleExportResult = useCallback(
+    (fmt: string) => {
+      if (!result) return;
+      setShowExportMenu(false);
+
+      // Build CSV/TSV in-browser from result
+      const sep = fmt === "tsv" ? "\t" : ",";
+      const header = result.columns.join(sep);
+      const body = result.rows
+        .map((row) =>
+          row
+            .map((v) =>
+              v === null ? "" : fmt === "json" ? v : `"${String(v).replace(/"/g, '""')}"`
+            )
+            .join(sep)
+        )
+        .join("\n");
+
+      let content: string;
+      let mimeType: string;
+      let filename: string;
+
+      if (fmt === "json") {
+        const records = result.rows.map((row) =>
+          Object.fromEntries(result.columns.map((c, i) => [c, row[i]]))
+        );
+        content = JSON.stringify(records, null, 2);
+        mimeType = "application/json";
+        filename = "query_result.json";
+      } else {
+        content = header + "\n" + body;
+        mimeType = fmt === "tsv" ? "text/tab-separated-values" : "text/csv";
+        filename = `query_result.${fmt}`;
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [result]
+  );
+
+  const gridColumns: GridColumn[] =
+    result?.columns.map((name, i) => ({
+      name,
+      type: result.column_types[i] || "VARCHAR",
+    })) ?? [];
 
   return (
     <div className="h-full flex flex-col gap-2">
-      {/* Header Context */}
+      {/* Header */}
       <div className="flex items-center justify-between border-b border-[var(--rule)] pb-2 select-none">
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-[var(--action)]" />
@@ -62,125 +126,125 @@ export default function QueryPage() {
             Editor Kueri SQL
           </h1>
           <span className="text-[12px] text-[var(--ink-muted)]">
-            (Jalankan di: <span className="font-mono text-[var(--ink)]">workspace (DuckDB)</span>)
+            Engine:{" "}
+            <span className="font-mono text-[var(--ink)]">workspace · DuckDB</span>
           </span>
         </div>
 
-        {/* Action button */}
         <div className="flex items-center gap-2">
           <button
-            onClick={handleRunQuery}
+            id="run-query-btn"
+            onClick={() => handleRunQuery()}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 h-[28px] text-[12px] font-semibold bg-[var(--action)] text-white hover:opacity-90 rounded-[2px] transition-colors"
+            className="flex items-center gap-1.5 px-3 h-[28px] text-[12px] font-semibold bg-[var(--action)] text-white hover:opacity-90 rounded-[2px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{loading ? "Menjalankan..." : "Jalankan kueri"}</span>
-            <kbd className="ml-1 text-[10px] font-mono opacity-80">Ctrl+Enter</kbd>
+            <span>{loading ? "Menjalankan…" : "Jalankan"}</span>
+            <kbd className="ml-1 text-[10px] font-mono opacity-70">⌃↵</kbd>
           </button>
         </div>
       </div>
 
-      {/* SQL Editor Area */}
-      <div className="h-[180px] bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] p-2 flex flex-col">
-        <textarea
+      {/* SQL Editor — CodeMirror 6 */}
+      <div className="flex-shrink-0">
+        <CodeEditor
+          id="sql-editor"
           value={sql}
-          onChange={(e) => setSql(e.target.value)}
-          placeholder="Tulis kueri SQL DuckDB di sini..."
-          className="w-full h-full bg-transparent font-mono text-[13px] text-[var(--ink)] outline-none resize-none leading-relaxed"
-          spellCheck={false}
+          onChange={(v) => setSql(v)}
+          language="sql"
+          height="180px"
+          minHeight="120px"
+          placeholder="-- Tulis kueri SQL DuckDB di sini…  Ctrl+Enter untuk menjalankan"
+          onRun={(v) => handleRunQuery(v)}
         />
       </div>
 
       {/* Error Banner */}
       {error && (
-        <div className="bg-[var(--error-wash)] border border-[var(--error)] p-2.5 rounded-[2px] flex items-center gap-2 text-[12px] text-[var(--error)]">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span className="font-mono">{error}</span>
+        <div
+          className="bg-[var(--error-wash)] border border-[var(--error)] p-2.5 rounded-[2px] flex items-start gap-2 text-[12px] text-[var(--error)]"
+          role="alert"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <pre className="font-mono whitespace-pre-wrap break-all">{error}</pre>
         </div>
       )}
 
-      {/* Query Results Zone */}
+      {/* Results */}
       <div className="flex-1 bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] overflow-hidden flex flex-col min-h-0">
-        {/* Results Toolbar */}
-        <div className="px-3 h-[28px] bg-[var(--surface-sunk)] border-b border-[var(--rule)] flex items-center justify-between text-[11px] font-mono text-[var(--ink-muted)] select-none">
-          <div className="flex items-center gap-4">
-            <span>
-              {result ? `${result.total_rows} baris dihasilkan` : "Belum ada hasil"}
-            </span>
-            {result && (
+        {/* Results toolbar */}
+        <div className="px-3 h-[28px] bg-[var(--surface-sunk)] border-b border-[var(--rule)] flex items-center justify-between text-[11px] font-mono text-[var(--ink-muted)] select-none flex-shrink-0">
+          <div className="flex items-center gap-3">
+            {loading ? (
+              <span className="flex items-center gap-1.5">
+                <div className="w-3 h-3 border border-[var(--action)] border-t-transparent rounded-full animate-spin" />
+                Menjalankan…
+              </span>
+            ) : result ? (
               <>
-                <span>|</span>
-                <span>Waktu: {result.execution_time_ms} ms</span>
-                <span>|</span>
-                <span>Perkiraan pindaian: ± {result.scanned_bytes_estimate || 256} byte</span>
+                <span className="flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  {result.total_rows.toLocaleString("id-ID")} baris
+                </span>
+                <span className="text-[var(--rule-strong)]">|</span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {result.execution_time_ms} ms
+                </span>
+                {result.scanned_bytes_estimate && (
+                  <>
+                    <span className="text-[var(--rule-strong)]">|</span>
+                    <span>
+                      ~{(result.scanned_bytes_estimate / 1024).toFixed(1)} KB dipindai
+                    </span>
+                  </>
+                )}
               </>
+            ) : (
+              <span>Tekan Ctrl+Enter untuk menjalankan</span>
             )}
           </div>
+
           {result && (
-            <button
-              onClick={() => alert("Mengunduh hasil kueri ke CSV...")}
-              className="flex items-center gap-1 text-[var(--ink)] hover:text-[var(--action)]"
-            >
-              <Download className="w-3 h-3" />
-              <span>Unduh CSV</span>
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu((v) => !v)}
+                id="export-result-btn"
+                className="flex items-center gap-1 text-[var(--ink)] hover:text-[var(--action)] transition-colors"
+              >
+                <Download className="w-3 h-3" />
+                <span>Unduh</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--rule-strong)] rounded-[2px] shadow-lg z-50 py-1 min-w-[100px]">
+                  {["csv", "tsv", "json"].map((fmt) => (
+                    <button
+                      key={fmt}
+                      onClick={() => handleExportResult(fmt)}
+                      className="w-full text-left px-3 h-[26px] text-[11px] font-mono hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                    >
+                      .{fmt}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Results Grid */}
-        <div className="flex-1 overflow-auto">
+        {/* Results grid */}
+        <div className="flex-1 min-h-0 overflow-hidden">
           {result ? (
-            <table className="w-full border-collapse text-[12px]">
-              <thead className="sticky top-0 bg-[var(--surface-sunk)] border-b border-[var(--rule)] z-10">
-                <tr className="h-[26px]">
-                  <th className="w-[44px] px-2 text-center font-mono text-[11px] text-[var(--ink-muted)] border-r border-[var(--rule)]">
-                    #
-                  </th>
-                  {result.columns.map((col, idx) => (
-                    <th
-                      key={col}
-                      className="px-3 text-left font-mono font-medium text-[var(--ink)] border-r border-[var(--rule)]"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span>{col}</span>
-                        <span className="text-[10px] text-[var(--ink-muted)] font-normal">
-                          {result.column_types[idx]?.toLowerCase() || "any"}
-                        </span>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, rIdx) => (
-                  <tr
-                    key={rIdx}
-                    className="h-[26px] border-b border-[var(--rule)] hover:bg-[color-mix(in_srgb,var(--action)_6%,var(--surface))]"
-                  >
-                    <td className="w-[44px] px-2 text-center font-mono text-[11px] text-[var(--ink-muted)] bg-[var(--surface-sunk)] border-r border-[var(--rule)]">
-                      {rIdx + 1}
-                    </td>
-                    {row.map((val, cIdx) => (
-                      <td
-                        key={cIdx}
-                        className={`px-3 border-r border-[var(--rule)] font-mono ${
-                          typeof val === "number" ? "text-right" : "text-left"
-                        }`}
-                      >
-                        {val === null ? (
-                          <span className="italic text-[var(--ink-muted)]">NULL</span>
-                        ) : (
-                          String(val)
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataGrid
+              columns={gridColumns}
+              rows={result.rows}
+              totalRows={result.total_rows}
+              editable={false}
+            />
           ) : (
             <div className="h-full flex items-center justify-center text-[12px] text-[var(--ink-muted)]">
-              Tekan &quot;Jalankan kueri&quot; atau Ctrl+Enter untuk mengeksekusi SQL
+              {loading ? "Memproses kueri…" : "Hasil kueri akan muncul di sini"}
             </div>
           )}
         </div>
