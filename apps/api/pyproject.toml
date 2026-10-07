@@ -21,6 +21,9 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "pymysql>=1.1.0",
     "python-calamine>=0.2.0",
+    "argon2-cffi>=25.1.0",
+    "pymongo>=4.18.2",
+    "fsspec>=2026.9.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +44,10 @@ packages = ["app"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501", "UP042", "W291"]
 
 [tool.mypy]
 python_version = "3.12"

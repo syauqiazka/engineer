@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { usePathname } from "next/navigation";
-import { Search, Moon, Sun, HelpCircle, Layers } from "lucide-react";
+import { Search, Moon, Sun, HelpCircle, Layers, Shield, Lock } from "lucide-react";
 import { useWorkspaceStore } from "@/lib/store";
 
 export function Topbar() {
@@ -10,6 +10,7 @@ export function Topbar() {
   const { setCommandPaletteOpen, activeEnv, setActiveEnv } = useWorkspaceStore();
   const [isDark, setIsDark] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [activeRole, setActiveRole] = useState<"admin" | "editor" | "viewer">("admin");
 
   const toggleTheme = () => {
     const nextDark = !isDark;
@@ -76,6 +77,39 @@ export function Topbar() {
 
         {/* Right Controls */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* Secret Store Lock Indicator */}
+          <div
+            title="Secret Store Mandiri: AES-GCM 256-bit Aktif"
+            className="hidden md:flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono bg-[var(--surface-sunk)] border border-[var(--rule)] text-[var(--success)] rounded-[2px]"
+          >
+            <Lock className="w-3 h-3" />
+            <span>AES-GCM</span>
+          </div>
+
+          {/* User Role Selector (Fase 2 RBAC) */}
+          <div className="flex items-center border border-[var(--rule)] rounded-[2px] overflow-hidden text-[11px] font-mono">
+            <span className="px-1.5 bg-[var(--surface-sunk)] text-[var(--ink-muted)] flex items-center gap-1">
+              <Shield className="w-3 h-3" /> Peran:
+            </span>
+            {(["admin", "editor", "viewer"] as const).map((r) => (
+              <button
+                key={r}
+                onClick={() => setActiveRole(r)}
+                className={`px-1.5 h-[22px] transition-colors uppercase font-bold text-[10px] ${
+                  activeRole === r
+                    ? r === "admin"
+                      ? "bg-[var(--action)] text-white"
+                      : r === "editor"
+                      ? "bg-[var(--accent)] text-white"
+                      : "bg-[#64748b] text-white"
+                    : "bg-[var(--surface)] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+
           {/* Environment Selector Chip */}
           <div className="flex items-center border border-[var(--rule)] rounded-[2px] overflow-hidden text-[11px] font-mono">
             {(["dev", "staging", "prod"] as const).map((env) => (

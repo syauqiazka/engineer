@@ -137,7 +137,12 @@ def get_pipeline_templates():
                     id="s1",
                     kind="filter",
                     name="Filter Sensor Aktif",
-                    params={"column": "status", "operator": "!=", "value": "NORMAL", "condition": "status != 'NORMAL'"},
+                    params={
+                        "column": "status",
+                        "operator": "!=",
+                        "value": "NORMAL",
+                        "condition": "status != 'NORMAL'",
+                    },
                     enabled=True,
                     input_rows=5,
                     output_rows=2,
@@ -184,7 +189,7 @@ def execute_pipeline(req: ExecutePipelineRequest):
     Jalankan pipeline di DuckDB workspace dan kembalikan preview hasilnya.
     Semua transformasi dijalankan sebagai TEMP VIEW berantai.
     """
-    import time  # noqa: PLC0415
+    import time
 
     engine = get_engine()
     step_defs = [
@@ -231,7 +236,10 @@ def execute_pipeline(req: ExecutePipelineRequest):
         elapsed = (time.perf_counter() - t0) * 1000
 
         formatted_rows = [
-            [None if v is None else str(v) if not isinstance(v, (int, float, bool)) else v for v in r]
+            [
+                None if v is None else str(v) if not isinstance(v, (int, float, bool)) else v
+                for v in r
+            ]
             for r in rows
         ]
 

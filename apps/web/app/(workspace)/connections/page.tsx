@@ -41,15 +41,18 @@ const KIND_LABELS: Record<string, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL / MariaDB",
   duckdb: "DuckDB (workspace)",
+  sqlite: "SQLite",
+  mongodb: "MongoDB",
+  storage: "Penyimpanan Objek (MinIO / S3-compat / Lokal)",
   files: "File lokal",
   kafka: "Kafka",
-  mongodb: "MongoDB",
 };
 
 const KIND_DEFAULT_PORT: Record<string, number> = {
   postgres: 5432,
   mysql: 3306,
   mongodb: 27017,
+  storage: 9000,
 };
 
 const ENV_COLORS: Record<string, string> = {

@@ -4,12 +4,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine.workspace import get_engine
+from app.routes.auth import router as auth_router
 from app.routes.connections import router as connections_router
 from app.routes.files import router as files_router
 from app.routes.overview import router as overview_router
 from app.routes.pipeline import router as pipeline_router
+from app.routes.quality import router as quality_router
 from app.routes.query import router as query_router
+from app.routes.runner import router as runner_router
 from app.routes.tables import router as tables_router
+from app.routes.workflows import router as workflows_router
 
 
 @asynccontextmanager
@@ -24,7 +28,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Data Engineer Workbench API",
     description="Backend engine mandiri tanpa layanan pihak ketiga untuk workbench data engineer.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -42,6 +46,10 @@ app.include_router(query_router, prefix="/api")
 app.include_router(connections_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(files_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
+app.include_router(quality_router, prefix="/api")
+app.include_router(runner_router, prefix="/api")
+app.include_router(workflows_router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback } from "react";
 import {
   Play,
   Download,
@@ -9,6 +9,9 @@ import {
   Clock,
   Database,
   ChevronDown,
+  Code2,
+  FileCode,
+  Sparkles,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import CodeEditor from "@/components/CodeEditor";
@@ -23,6 +26,20 @@ interface QueryResult {
   scanned_bytes_estimate: number | null;
 }
 
+interface PythonExecutionResponse {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  duration_ms: number;
+  output_preview: {
+    columns: string[];
+    types: string[];
+    rows: Record<string, unknown>[];
+  } | null;
+  tables_written: string[];
+  error_message: string | null;
+}
+
 const DEFAULT_SQL = `SELECT 
   kota,
   kategori,
@@ -32,14 +49,77 @@ FROM pesanan_harian
 GROUP BY kota, kategori
 ORDER BY omset_rp DESC;`;
 
+const DEFAULT_PYTHON = `import polars as pl
+
+# 1. Baca tabel langsung dari DuckDB workspace via cache parquet (bebas lock)
+df = ctx.read_table("pesanan_harian", engine="polars")
+ctx.log(f"Berhasil membaca {len(df)} baris data!")
+
+# 2. Agregasi cepat dengan engine Polars
+agg = df.group_by(["kota", "kategori"]).agg(
+    pl.len().alias("jumlah_pesanan"),
+    pl.col("total_harga").sum().alias("omset_rp")
+).sort("omset_rp", descending=True)
+
+ctx.log("Agregasi selesai. Menampilkan hasil:")
+ctx.display(agg)
+`;
+
+const PYTHON_TEMPLATES = [
+  {
+    name: "Agregasi Omzet (Polars)",
+    code: DEFAULT_PYTHON,
+  },
+  {
+    name: "Filter & Simpan Tabel Baru (Polars)",
+    code: `import polars as pl
+
+# Baca pesanan
+df = ctx.read_table("pesanan_harian", engine="polars")
+
+# Filter pesanan yang belum lunas
+pending = df.filter(pl.col("status_bayar") != "Lunas")
+ctx.log(f"Ditemukan {len(pending)} pesanan yang butuh tindak lanjut.")
+
+# Tulis tabel baru ke DuckDB workspace
+ctx.write_table("pesanan_belum_lunas", pending)
+ctx.log("Tabel 'pesanan_belum_lunas' berhasil dibuat di workspace!")
+
+ctx.display(pending)
+`,
+  },
+  {
+    name: "Analisis Statistik Cepat (pandas)",
+    code: `import pandas as pd
+
+# Baca data ke DataFrame pandas
+df = ctx.read_table("pesanan_harian", engine="pandas")
+
+ctx.log("--- Ringkasan Statistik Kolom total_harga ---")
+ctx.log(df["total_harga"].describe().to_string())
+
+# Tambah kolom rasio nilai
+avg_val = df["total_harga"].mean()
+df["rasio_ke_rata2"] = (df["total_harga"] / avg_val).round(2)
+
+ctx.display(df)
+`,
+  },
+];
+
 export default function QueryPage() {
+  const [activeTab, setActiveTab] = useState<"sql" | "python">("sql");
   const [sql, setSql] = useState<string>(DEFAULT_SQL);
+  const [pythonCode, setPythonCode] = useState<string>(DEFAULT_PYTHON);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResult | null>(null);
+  
+  // Results
+  const [sqlResult, setSqlResult] = useState<QueryResult | null>(null);
+  const [pyResult, setPyResult] = useState<PythonExecutionResponse | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  const handleRunQuery = useCallback(
+  const handleRunSQL = useCallback(
     async (sqlToRun?: string) => {
       const query = sqlToRun ?? sql;
       if (!query.trim()) return;
@@ -51,7 +131,7 @@ export default function QueryPage() {
           method: "POST",
           body: JSON.stringify({ sql: query }),
         });
-        setResult(data);
+        setSqlResult(data);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg || "Gagal mengeksekusi kueri SQL");
@@ -62,15 +142,59 @@ export default function QueryPage() {
     [sql]
   );
 
+  const handleRunPython = useCallback(
+    async (codeToRun?: string) => {
+      const code = codeToRun ?? pythonCode;
+      if (!code.trim()) return;
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchApi<PythonExecutionResponse>("/runner/python", {
+          method: "POST",
+          body: JSON.stringify({ code }),
+        });
+        setPyResult(data);
+        if (!data.success && data.error_message) {
+          setError(data.error_message);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg || "Gagal menjalankan skrip Python");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pythonCode]
+  );
+
+  const handleRunCurrent = () => {
+    if (activeTab === "sql") {
+      handleRunSQL();
+    } else {
+      handleRunPython();
+    }
+  };
+
   const handleExportResult = useCallback(
     (fmt: string) => {
-      if (!result) return;
-      setShowExportMenu(false);
+      let columns: string[] = [];
+      let rows: unknown[][] = [];
 
-      // Build CSV/TSV in-browser from result
+      if (activeTab === "sql" && sqlResult) {
+        columns = sqlResult.columns;
+        rows = sqlResult.rows;
+      } else if (activeTab === "python" && pyResult?.output_preview) {
+        columns = pyResult.output_preview.columns;
+        rows = pyResult.output_preview.rows.map((r) => columns.map((c) => r[c]));
+      } else {
+        return;
+      }
+
+      setShowExportMenu(false);
       const sep = fmt === "tsv" ? "\t" : ",";
-      const header = result.columns.join(sep);
-      const body = result.rows
+      const header = columns.join(sep);
+      const body = rows
         .map((row) =>
           row
             .map((v) =>
@@ -85,8 +209,8 @@ export default function QueryPage() {
       let filename: string;
 
       if (fmt === "json") {
-        const records = result.rows.map((row) =>
-          Object.fromEntries(result.columns.map((c, i) => [c, row[i]]))
+        const records = rows.map((row) =>
+          Object.fromEntries(columns.map((c, i) => [c, row[i]]))
         );
         content = JSON.stringify(records, null, 2);
         mimeType = "application/json";
@@ -107,144 +231,241 @@ export default function QueryPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     },
-    [result]
+    [activeTab, sqlResult, pyResult]
   );
 
-  const gridColumns: GridColumn[] =
-    result?.columns.map((name, i) => ({
-      name,
-      type: result.column_types[i] || "VARCHAR",
-    })) ?? [];
+  // Ubah preview python ke format GridColumn jika ada
+  const pythonGridData = React.useMemo(() => {
+    if (!pyResult?.output_preview) return null;
+    const { columns, types, rows } = pyResult.output_preview;
+    const gridCols: GridColumn[] = columns.map((c, i) => ({
+      name: c,
+      type: types[i] || "VARCHAR",
+    }));
+    const gridRows = rows.map((r) => columns.map((c) => r[c]));
+    return { columns: gridCols, rows: gridRows, total: rows.length };
+  }, [pyResult]);
+
+  const sqlGridColumns: GridColumn[] = React.useMemo(
+    () =>
+      sqlResult
+        ? sqlResult.columns.map((col, idx) => ({
+            name: col,
+            type: sqlResult.column_types[idx] ?? "VARCHAR",
+          }))
+        : [],
+    [sqlResult]
+  );
 
   return (
-    <div className="h-full flex flex-col gap-2">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-[var(--rule)] pb-2 select-none">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-[var(--action)]" />
-          <h1 className="text-[14px] font-semibold text-[var(--ink)]">
-            Editor Kueri SQL
-          </h1>
-          <span className="text-[12px] text-[var(--ink-muted)]">
-            Engine:{" "}
-            <span className="font-mono text-[var(--ink)]">workspace · DuckDB</span>
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
+    <div className="flex flex-col h-full gap-3">
+      {/* Top Bar with Language Tabs & Action Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--rule)] pb-2">
+        <div className="flex items-center gap-1 bg-[var(--surface-sunk)] p-0.5 rounded-[3px] border border-[var(--rule)]">
           <button
-            id="run-query-btn"
-            onClick={() => handleRunQuery()}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 h-[28px] text-[12px] font-semibold bg-[var(--action)] text-white hover:opacity-90 rounded-[2px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setActiveTab("sql")}
+            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold rounded-[2px] transition-colors ${
+              activeTab === "sql"
+                ? "bg-[var(--surface)] text-[var(--ink)] shadow-sm"
+                : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
+            }`}
           >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{loading ? "Menjalankan…" : "Jalankan"}</span>
-            <kbd className="ml-1 text-[10px] font-mono opacity-70">⌃↵</kbd>
+            <Database className="w-3.5 h-3.5 text-[var(--action)]" />
+            SQL (DuckDB)
+          </button>
+          <button
+            onClick={() => setActiveTab("python")}
+            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold rounded-[2px] transition-colors ${
+              activeTab === "python"
+                ? "bg-[var(--surface)] text-[var(--ink)] shadow-sm"
+                : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
+            }`}
+          >
+            <Code2 className="w-3.5 h-3.5 text-[var(--success)]" />
+            Python (Polars Sandbox)
           </button>
         </div>
-      </div>
 
-      {/* SQL Editor — CodeMirror 6 */}
-      <div className="flex-shrink-0">
-        <CodeEditor
-          id="sql-editor"
-          value={sql}
-          onChange={(v) => setSql(v)}
-          language="sql"
-          height="180px"
-          minHeight="120px"
-          placeholder="-- Tulis kueri SQL DuckDB di sini…  Ctrl+Enter untuk menjalankan"
-          onRun={(v) => handleRunQuery(v)}
-        />
-      </div>
+        {/* Action Controls */}
+        <div className="flex items-center gap-2">
+          {activeTab === "python" && (
+            <div className="relative group">
+              <button className="flex items-center gap-1 px-2.5 py-1 text-[12px] bg-[var(--surface)] border border-[var(--rule)] hover:bg-[var(--surface-sunk)] text-[var(--ink)] rounded-[2px]">
+                <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>Contoh Kode</span>
+                <ChevronDown className="w-3 h-3 text-[var(--ink-muted)]" />
+              </button>
+              <div className="absolute right-0 top-full mt-1 w-56 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg hidden group-hover:block z-20 py-1">
+                {PYTHON_TEMPLATES.map((tmpl, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setPythonCode(tmpl.code)}
+                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)] block"
+                  >
+                    {tmpl.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Error Banner */}
-      {error && (
-        <div
-          className="bg-[var(--error-wash)] border border-[var(--error)] p-2.5 rounded-[2px] flex items-start gap-2 text-[12px] text-[var(--error)]"
-          role="alert"
-        >
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <pre className="font-mono whitespace-pre-wrap break-all">{error}</pre>
-        </div>
-      )}
-
-      {/* Results */}
-      <div className="flex-1 bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] overflow-hidden flex flex-col min-h-0">
-        {/* Results toolbar */}
-        <div className="px-3 h-[28px] bg-[var(--surface-sunk)] border-b border-[var(--rule)] flex items-center justify-between text-[11px] font-mono text-[var(--ink-muted)] select-none flex-shrink-0">
-          <div className="flex items-center gap-3">
-            {loading ? (
-              <span className="flex items-center gap-1.5">
-                <div className="w-3 h-3 border border-[var(--action)] border-t-transparent rounded-full animate-spin" />
-                Menjalankan…
-              </span>
-            ) : result ? (
-              <>
-                <span className="flex items-center gap-1">
-                  <Database className="w-3 h-3" />
-                  {result.total_rows.toLocaleString("id-ID")} baris
-                </span>
-                <span className="text-[var(--rule-strong)]">|</span>
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {result.execution_time_ms} ms
-                </span>
-                {result.scanned_bytes_estimate && (
-                  <>
-                    <span className="text-[var(--rule-strong)]">|</span>
-                    <span>
-                      ~{(result.scanned_bytes_estimate / 1024).toFixed(1)} KB dipindai
-                    </span>
-                  </>
-                )}
-              </>
-            ) : (
-              <span>Tekan Ctrl+Enter untuk menjalankan</span>
-            )}
-          </div>
-
-          {result && (
+          {/* Export button */}
+          {((activeTab === "sql" && sqlResult) || (activeTab === "python" && pyResult?.output_preview)) && (
             <div className="relative">
               <button
                 onClick={() => setShowExportMenu((v) => !v)}
-                id="export-result-btn"
-                className="flex items-center gap-1 text-[var(--ink)] hover:text-[var(--action)] transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 text-[12px] bg-[var(--surface)] border border-[var(--rule)] hover:bg-[var(--surface-sunk)] text-[var(--ink)] rounded-[2px]"
               >
-                <Download className="w-3 h-3" />
-                <span>Unduh</span>
-                <ChevronDown className="w-3 h-3" />
+                <Download className="w-3.5 h-3.5 text-[var(--ink-muted)]" />
+                <span>Ekspor</span>
+                <ChevronDown className="w-3 h-3 text-[var(--ink-muted)]" />
               </button>
               {showExportMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--rule-strong)] rounded-[2px] shadow-lg z-50 py-1 min-w-[100px]">
-                  {["csv", "tsv", "json"].map((fmt) => (
-                    <button
-                      key={fmt}
-                      onClick={() => handleExportResult(fmt)}
-                      className="w-full text-left px-3 h-[26px] text-[11px] font-mono hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
-                    >
-                      .{fmt}
-                    </button>
-                  ))}
+                <div className="absolute right-0 top-full mt-1 w-32 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg z-20 py-1">
+                  <button
+                    onClick={() => handleExportResult("csv")}
+                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                  >
+                    CSV (.csv)
+                  </button>
+                  <button
+                    onClick={() => handleExportResult("tsv")}
+                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                  >
+                    TSV (.tsv)
+                  </button>
+                  <button
+                    onClick={() => handleExportResult("json")}
+                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                  >
+                    JSON (.json)
+                  </button>
                 </div>
               )}
             </div>
           )}
+
+          {/* Run button */}
+          <button
+            onClick={handleRunCurrent}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3.5 py-1 text-[12px] font-semibold bg-[var(--action)] text-white hover:bg-[var(--action-hover)] disabled:opacity-50 rounded-[2px] transition-colors"
+          >
+            <Play className={`w-3.5 h-3.5 fill-white ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Menjalankan..." : "Jalankan (Ctrl+Enter)"}
+          </button>
+        </div>
+      </div>
+
+      {/* Editor Frame */}
+      <div className="border border-[var(--rule)] rounded-[3px] overflow-hidden bg-[var(--surface-sunk)]">
+        {activeTab === "sql" ? (
+          <CodeEditor
+            value={sql}
+            onChange={setSql}
+            language="sql"
+            height="180px"
+            onRun={handleRunSQL}
+            placeholder="Tulis kueri SQL di sini..."
+          />
+        ) : (
+          <CodeEditor
+            value={pythonCode}
+            onChange={setPythonCode}
+            language="python"
+            height="210px"
+            onRun={handleRunPython}
+            placeholder="Tulis skrip Python dengan ctx.read_table('tabel'), Polars/pandas di sini..."
+          />
+        )}
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="flex items-start gap-2 p-2.5 bg-[var(--error-wash)] border border-[var(--error)] text-[var(--error)] text-[12px] rounded-[3px] font-mono whitespace-pre-wrap">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1">{error}</div>
+        </div>
+      )}
+
+      {/* Python Terminal Log Output (if present) */}
+      {activeTab === "python" && pyResult && (
+        <div className="bg-[#0b0d13] border border-[var(--rule)] rounded-[3px] p-2.5 font-mono text-[11px] text-[#cbd5e1] flex flex-col gap-1 max-h-36 overflow-y-auto">
+          <div className="flex items-center justify-between text-[10px] text-[#64748b] border-b border-[#1e293b] pb-1">
+            <span className="flex items-center gap-1">
+              <Terminal className="w-3 h-3" /> Console Output (Sandbox Subprocess)
+            </span>
+            <span>Durasi: {pyResult.duration_ms} ms</span>
+          </div>
+          {pyResult.stdout ? (
+            <pre className="whitespace-pre-wrap">{pyResult.stdout}</pre>
+          ) : (
+            <span className="text-[#64748b] italic">Tidak ada output stdout.</span>
+          )}
+          {pyResult.tables_written.length > 0 && (
+            <div className="text-[var(--success)] text-[11px] mt-1">
+              ✓ Tabel ditulis ke workspace: {pyResult.tables_written.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Result Metrics & Data Grid */}
+      <div className="flex-1 flex flex-col min-h-0 border border-[var(--rule)] rounded-[3px] overflow-hidden bg-[var(--surface)]">
+        {/* Result Header Info */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-sunk)] border-b border-[var(--rule)] text-[11px] text-[var(--ink-muted)]">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-[var(--ink)]">Hasil Eksekusi</span>
+            {activeTab === "sql" && sqlResult && (
+              <>
+                <span>{sqlResult.total_rows.toLocaleString()} baris</span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> {sqlResult.execution_time_ms} ms
+                </span>
+              </>
+            )}
+            {activeTab === "python" && pythonGridData && (
+              <>
+                <span>{pythonGridData.total} baris DataFrame</span>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> {pyResult?.duration_ms} ms
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Results grid */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {result ? (
+        {/* Grid Content */}
+        <div className="flex-1 overflow-auto">
+          {activeTab === "sql" ? (
+            sqlResult ? (
+              <DataGrid
+                columns={sqlGridColumns}
+                rows={sqlResult.rows}
+                totalRows={sqlResult.total_rows}
+              />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
+                <Database className="w-8 h-8 opacity-30 mb-2" />
+                <p className="text-[13px]">Kueri SQL belum dijalankan.</p>
+                <p className="text-[11px]">Tekan Ctrl+Enter atau tombol Jalankan untuk melihat data.</p>
+              </div>
+            )
+          ) : pythonGridData ? (
             <DataGrid
-              columns={gridColumns}
-              rows={result.rows}
-              totalRows={result.total_rows}
-              editable={false}
+              columns={pythonGridData.columns}
+              rows={pythonGridData.rows}
+              totalRows={pythonGridData.total}
             />
           ) : (
-            <div className="h-full flex items-center justify-center text-[12px] text-[var(--ink-muted)]">
-              {loading ? "Memproses kueri…" : "Hasil kueri akan muncul di sini"}
+            <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
+              <FileCode className="w-8 h-8 opacity-30 mb-2" />
+              <p className="text-[13px]">Skrip Python belum dijalankan.</p>
+              <p className="text-[11px]">
+                Gunakan <code className="bg-[var(--surface-sunk)] px-1 py-0.5 rounded text-[var(--action)]">ctx.display(df)</code> untuk menampilkan DataFrame di grid ini.
+              </p>
             </div>
           )}
         </div>

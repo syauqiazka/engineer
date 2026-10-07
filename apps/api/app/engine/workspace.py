@@ -260,6 +260,12 @@ class WorkspaceEngine:
             )
         return tables
 
+    def query(self, sql: str, limit: int = 1000) -> QueryResult:
+        return self.execute_query(sql, limit)
+
+    def execute(self, sql: str) -> Any:
+        return self.conn.execute(sql)
+
     def execute_query(self, sql: str, limit: int = 1000) -> QueryResult:
         import time
 

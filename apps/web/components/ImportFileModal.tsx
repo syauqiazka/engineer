@@ -16,7 +16,6 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
-import { fetchApi } from "@/lib/api";
 
 const SUPPORTED = new Set([".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json", ".ndjson", ".parquet"]);
 

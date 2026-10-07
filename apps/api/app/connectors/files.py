@@ -6,7 +6,6 @@ Lisensi dependensi: openpyxl (MIT), python-calamine (MIT), pyarrow (Apache-2.0).
 
 from __future__ import annotations
 
-import io
 import mimetypes
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,8 +18,8 @@ from app.connectors.base import (
     Capabilities,
     CatalogNode,
     ColumnInfo,
-    Schema,
     ScanEstimate,
+    Schema,
     TableRef,
     TestResult,
     WriteMode,
@@ -78,7 +77,7 @@ class FileConnector:
         except Exception as e:  # noqa: BLE001
             return TestResult(success=False, message=str(e))
 
-    def catalog(self, path: list[str]) -> list[CatalogNode]:  # noqa: ARG002
+    def catalog(self, path: list[str]) -> list[CatalogNode]:
         return [
             CatalogNode(
                 name=self.file_path.stem,
@@ -87,7 +86,7 @@ class FileConnector:
             )
         ]
 
-    def schema(self, ref: TableRef) -> Schema:  # noqa: ARG002
+    def schema(self, ref: TableRef) -> Schema:
         con = duckdb.connect(":memory:")
         rel = self._read_to_duckdb(con)
         return Schema(
@@ -97,13 +96,13 @@ class FileConnector:
             ]
         )
 
-    def preview(self, ref: TableRef, limit: int = 100) -> Batch:  # noqa: ARG002
+    def preview(self, ref: TableRef, limit: int = 100) -> Batch:
         con = duckdb.connect(":memory:")
         rel = self._read_to_duckdb(con)
         rows = rel.limit(limit).fetchall()
         return Batch(columns=list(rel.columns), rows=[list(r) for r in rows], total_rows=len(rows))
 
-    def read(self, query: str, chunk_rows: int = 1000) -> Iterator[Batch]:  # noqa: ARG002
+    def read(self, query: str, chunk_rows: int = 1000) -> Iterator[Batch]:
         con = duckdb.connect(":memory:")
         rel = self._read_to_duckdb(con)
         offset = 0
@@ -121,13 +120,15 @@ class FileConnector:
 
     def write(
         self,
-        ref: TableRef,  # noqa: ARG002
-        batches: Iterator[Batch],  # noqa: ARG002
-        mode: WriteMode,  # noqa: ARG002
+        ref: TableRef,
+        batches: Iterator[Batch],
+        mode: WriteMode,
     ) -> WriteResult:
-        return WriteResult(success=False, rows_written=0, message="Konektor file bersifat read-only.")
+        return WriteResult(
+            success=False, rows_written=0, message="Konektor file bersifat read-only."
+        )
 
-    def estimate_scan(self, query: str) -> ScanEstimate | None:  # noqa: ARG002
+    def estimate_scan(self, query: str) -> ScanEstimate | None:
         try:
             con = duckdb.connect(":memory:")
             rel = self._read_to_duckdb(con)
@@ -169,7 +170,7 @@ class FileConnector:
     def _read_excel_via_pandas(self, con: duckdb.DuckDBPyConnection, path_str: str) -> Any:
         """Baca Excel via pandas/openpyxl lalu register ke DuckDB."""
         try:
-            import pandas as pd  # noqa: PLC0415
+            import pandas as pd
 
             df = pd.read_excel(path_str, engine="openpyxl")
             con.register("_excel_tmp", df)
@@ -199,12 +200,12 @@ class FileConnector:
         if self._ext in (".csv", ".tsv", ".txt"):
             sep = "\t" if self._ext == ".tsv" else ","
             workspace_conn.execute(
-                f"CREATE OR REPLACE TABLE \"{safe_name}\" AS "
+                f'CREATE OR REPLACE TABLE "{safe_name}" AS '
                 f"SELECT * FROM read_csv_auto('{path_str}', sep='{sep}', header=true)"
             )
 
         elif self._ext in (".xlsx", ".xls"):
-            import pandas as pd  # noqa: PLC0415
+            import pandas as pd
 
             df = pd.read_excel(path_str, engine="openpyxl")
             workspace_conn.register("_excel_import_tmp", df)
@@ -215,19 +216,19 @@ class FileConnector:
 
         elif self._ext == ".json":
             workspace_conn.execute(
-                f"CREATE OR REPLACE TABLE \"{safe_name}\" AS "
+                f'CREATE OR REPLACE TABLE "{safe_name}" AS '
                 f"SELECT * FROM read_json_auto('{path_str}')"
             )
 
         elif self._ext == ".ndjson":
             workspace_conn.execute(
-                f"CREATE OR REPLACE TABLE \"{safe_name}\" AS "
+                f'CREATE OR REPLACE TABLE "{safe_name}" AS '
                 f"SELECT * FROM read_ndjson_auto('{path_str}')"
             )
 
         elif self._ext == ".parquet":
             workspace_conn.execute(
-                f"CREATE OR REPLACE TABLE \"{safe_name}\" AS "
+                f'CREATE OR REPLACE TABLE "{safe_name}" AS '
                 f"SELECT * FROM read_parquet('{path_str}')"
             )
 
@@ -257,7 +258,7 @@ def read_file_bytes_to_workspace(
     Tulis bytes ke file sementara, impor ke workspace, hapus file temp.
     Dipakai oleh endpoint upload.
     """
-    import tempfile  # noqa: PLC0415
+    import tempfile
 
     ext = detect_format(filename, content_type)
     if ext not in SUPPORTED_EXTENSIONS:

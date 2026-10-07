@@ -57,7 +57,7 @@ class FilterCodeGen:
             val_repr = f"'{val}'" if isinstance(val, str) else str(val)
             return f"{df_var} = {df_var}[{df_var}['{col}'] {op} {val_repr}]"
         condition = step.params.get("condition", "True")
-        return f"# {df_var} = {df_var}.query(\"{condition}\")"
+        return f'# {df_var} = {df_var}.query("{condition}")'
 
 
 class DropNullCodeGen:
@@ -169,8 +169,13 @@ class AggregateCodeGen:
         group_by = step.params.get("group_by", [])
         aggregations = step.params.get("aggregations", [])
         fn_map = {
-            "SUM": "sum", "COUNT": "count", "AVG": "mean",
-            "MIN": "min", "MAX": "max", "FIRST": "first", "LAST": "last",
+            "SUM": "sum",
+            "COUNT": "count",
+            "AVG": "mean",
+            "MIN": "min",
+            "MAX": "max",
+            "FIRST": "first",
+            "LAST": "last",
         }
         agg_exprs = []
         for agg in aggregations:
@@ -201,9 +206,7 @@ class AggregateCodeGen:
                 agg_dict.setdefault(col, []).append(fn)
         agg_dict_str = str(agg_dict)
         gb_str = str(group_by)
-        return (
-            f"{df_var} = {df_var}.groupby({gb_str}).agg({agg_dict_str}).reset_index()"
-        )
+        return f"{df_var} = {df_var}.groupby({gb_str}).agg({agg_dict_str}).reset_index()"
 
 
 class RenameCodeGen:
@@ -231,11 +234,20 @@ class CastCodeGen:
 
     # SQL type mapping
     _SQL_TYPES = {
-        "int": "INTEGER", "integer": "INTEGER", "bigint": "BIGINT",
-        "float": "DOUBLE", "double": "DOUBLE", "decimal": "DECIMAL",
-        "str": "VARCHAR", "varchar": "VARCHAR", "text": "VARCHAR",
-        "bool": "BOOLEAN", "boolean": "BOOLEAN",
-        "date": "DATE", "datetime": "TIMESTAMP", "timestamp": "TIMESTAMP",
+        "int": "INTEGER",
+        "integer": "INTEGER",
+        "bigint": "BIGINT",
+        "float": "DOUBLE",
+        "double": "DOUBLE",
+        "decimal": "DECIMAL",
+        "str": "VARCHAR",
+        "varchar": "VARCHAR",
+        "text": "VARCHAR",
+        "bool": "BOOLEAN",
+        "boolean": "BOOLEAN",
+        "date": "DATE",
+        "datetime": "TIMESTAMP",
+        "timestamp": "TIMESTAMP",
     }
 
     def to_sql(self, step: PipelineStepDef, source_table: str) -> str:
@@ -252,11 +264,19 @@ class CastCodeGen:
     def to_polars(self, step: PipelineStepDef, df_var: str) -> str:
         casts = step.params.get("casts", {})
         _PL_TYPES = {
-            "int": "pl.Int64", "integer": "pl.Int64", "bigint": "pl.Int64",
-            "float": "pl.Float64", "double": "pl.Float64",
-            "str": "pl.Utf8", "varchar": "pl.Utf8", "text": "pl.Utf8",
-            "bool": "pl.Boolean", "boolean": "pl.Boolean",
-            "date": "pl.Date", "datetime": "pl.Datetime", "timestamp": "pl.Datetime",
+            "int": "pl.Int64",
+            "integer": "pl.Int64",
+            "bigint": "pl.Int64",
+            "float": "pl.Float64",
+            "double": "pl.Float64",
+            "str": "pl.Utf8",
+            "varchar": "pl.Utf8",
+            "text": "pl.Utf8",
+            "bool": "pl.Boolean",
+            "boolean": "pl.Boolean",
+            "date": "pl.Date",
+            "datetime": "pl.Datetime",
+            "timestamp": "pl.Datetime",
         }
         exprs = [
             f"pl.col('{col}').cast({_PL_TYPES.get(dtype.lower(), 'pl.Utf8')})"
@@ -267,17 +287,25 @@ class CastCodeGen:
     def to_pandas(self, step: PipelineStepDef, df_var: str) -> str:
         casts = step.params.get("casts", {})
         _PD_TYPES = {
-            "int": "int64", "integer": "int64", "bigint": "int64",
-            "float": "float64", "double": "float64",
-            "str": "str", "varchar": "str", "text": "str",
-            "bool": "bool", "boolean": "bool",
-            "date": "datetime64[ns]", "datetime": "datetime64[ns]", "timestamp": "datetime64[ns]",
+            "int": "int64",
+            "integer": "int64",
+            "bigint": "int64",
+            "float": "float64",
+            "double": "float64",
+            "str": "str",
+            "varchar": "str",
+            "text": "str",
+            "bool": "bool",
+            "boolean": "bool",
+            "date": "datetime64[ns]",
+            "datetime": "datetime64[ns]",
+            "timestamp": "datetime64[ns]",
         }
         lines = [
             f"{df_var}['{col}'] = {df_var}['{col}'].astype('{_PD_TYPES.get(dtype.lower(), dtype)}')"
             for col, dtype in casts.items()
         ]
-        return "\n".join(lines) if lines else f"# tidak ada cast"
+        return "\n".join(lines) if lines else "# tidak ada cast"
 
 
 class SortCodeGen:
@@ -289,8 +317,7 @@ class SortCodeGen:
         if not columns:
             return f"SELECT * FROM {source_table}"
         order_parts = [
-            f'"{c["column"]}" {"ASC" if c.get("ascending", True) else "DESC"}'
-            for c in columns
+            f'"{c["column"]}" {"ASC" if c.get("ascending", True) else "DESC"}' for c in columns
         ]
         return f"SELECT * FROM {source_table}\nORDER BY {', '.join(order_parts)}"
 
@@ -373,7 +400,11 @@ def generate_pipeline_code(source_table: str, steps: list[PipelineStepDef]) -> d
     active_steps = [s for s in steps if s.enabled]
 
     # --- SQL ---
-    sql_lines = [f"-- Pipeline untuk tabel: {source_table}", f"-- {len(active_steps)} step aktif", ""]
+    sql_lines = [
+        f"-- Pipeline untuk tabel: {source_table}",
+        f"-- {len(active_steps)} step aktif",
+        "",
+    ]
     curr_view = source_table
     for i, step in enumerate(active_steps, 1):
         gen = STEP_GENERATORS.get(step.kind)
@@ -385,14 +416,14 @@ def generate_pipeline_code(source_table: str, steps: list[PipelineStepDef]) -> d
             sql_lines.append(sql_step + ";")
             sql_lines.append("")
             curr_view = next_view
-    sql_lines.append(f"-- Hasil akhir")
+    sql_lines.append("-- Hasil akhir")
     sql_lines.append(f"SELECT * FROM {curr_view};")
 
     # --- Polars ---
     polars_lines = [
         "import polars as pl",
         "",
-        f"# Baca dari workspace DuckDB",
+        "# Baca dari workspace DuckDB",
         f"df = pl.read_database_uri('SELECT * FROM {source_table}', uri='duckdb:///workspace.duckdb')",
         "",
     ]
@@ -402,14 +433,14 @@ def generate_pipeline_code(source_table: str, steps: list[PipelineStepDef]) -> d
             polars_lines.append(f"# Step: {step.name}")
             polars_lines.append(gen.to_polars(step, "df"))
             polars_lines.append("")
-    polars_lines.append(f"print(f'Selesai: {{len(df):,}} baris')")
+    polars_lines.append("print(f'Selesai: {len(df):,} baris')")
 
     # --- pandas ---
     pandas_lines = [
         "import pandas as pd",
         "import duckdb",
         "",
-        f"# Baca dari workspace DuckDB",
+        "# Baca dari workspace DuckDB",
         "con = duckdb.connect('workspace.duckdb')",
         f"df = con.execute('SELECT * FROM {source_table}').fetchdf()",
         "",
@@ -420,7 +451,7 @@ def generate_pipeline_code(source_table: str, steps: list[PipelineStepDef]) -> d
             pandas_lines.append(f"# Step: {step.name}")
             pandas_lines.append(gen.to_pandas(step, "df"))
             pandas_lines.append("")
-    pandas_lines.append(f"print(f'Selesai: {{len(df):,}} baris')")
+    pandas_lines.append("print(f'Selesai: {len(df):,} baris')")
 
     return {
         "sql": "\n".join(sql_lines),

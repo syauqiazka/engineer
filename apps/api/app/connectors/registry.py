@@ -36,7 +36,7 @@ def build_connector(config: ConnectionConfig, password: str = "") -> Any:
     kind = config.kind.lower()
 
     if kind == "postgres":
-        from app.connectors.postgres import PostgresConnector  # noqa: PLC0415
+        from app.connectors.postgres import PostgresConnector
 
         return PostgresConnector(
             host=config.host,
@@ -48,7 +48,7 @@ def build_connector(config: ConnectionConfig, password: str = "") -> Any:
         )
 
     elif kind in ("mysql", "mariadb"):
-        from app.connectors.mysql import MySQLConnector  # noqa: PLC0415
+        from app.connectors.mysql import MySQLConnector
 
         return MySQLConnector(
             host=config.host,
@@ -59,14 +59,45 @@ def build_connector(config: ConnectionConfig, password: str = "") -> Any:
             read_only=config.read_only,
         )
 
+    elif kind == "sqlite":
+        from app.connectors.sqlite import SQLiteConnector
+
+        db_path = config.database or config.host
+        return SQLiteConnector(
+            db_path=db_path,
+            read_only=config.read_only,
+        )
+
+    elif kind == "mongodb":
+        from app.connectors.mongodb import MongoDBConnector
+
+        return MongoDBConnector(
+            host=config.host or "localhost",
+            port=config.port or 27017,
+            database=config.database or "test",
+            username=config.username,
+            password=password,
+            read_only=config.read_only,
+        )
+
+    elif kind in ("storage", "s3", "minio"):
+        from app.connectors.storage import StorageConnector
+
+        return StorageConnector(
+            endpoint_url=config.host if config.host.startswith("http") else "",
+            bucket_or_path=config.database or config.host or "data",
+            access_key=config.username,
+            secret_key=password,
+            storage_type="s3"
+            if (config.host.startswith("http") or kind in ("s3", "minio"))
+            else "local",
+            read_only=config.read_only,
+        )
+
     elif kind == "files":
         raise ValueError("Konektor file diinstansiasi langsung via FileConnector, bukan registry.")
 
     elif kind == "duckdb":
-        # Koneksi ke workspace DuckDB internal
-        from app.engine.workspace import get_engine  # noqa: PLC0415
-
-        engine = get_engine()
 
         class _DuckDBConnector:
             kind = "duckdb"
@@ -102,8 +133,13 @@ KIND_CAPABILITIES: dict[str, Capabilities] = {
     "mariadb": Capabilities(
         supports_sql=True, supports_write=True, supports_pushdown=True, supports_explain=True
     ),
+    "sqlite": Capabilities(
+        supports_sql=True, supports_write=True, supports_pushdown=True, supports_explain=False
+    ),
     "duckdb": Capabilities(supports_sql=True, supports_write=True, supports_pushdown=True),
     "files": Capabilities(supports_sql=False, supports_write=False),
     "kafka": Capabilities(supports_sql=False, supports_write=True, is_streaming=True),
     "mongodb": Capabilities(supports_sql=False, supports_write=True, has_schema=False),
+    "storage": Capabilities(supports_sql=False, supports_write=True, has_schema=True),
+    "s3": Capabilities(supports_sql=False, supports_write=True, has_schema=True),
 }

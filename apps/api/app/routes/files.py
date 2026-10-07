@@ -72,7 +72,7 @@ async def import_file(
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"File terlalu besar ({len(content) // (1024*1024)} MB). Batas: 200 MB.",
+            detail=f"File terlalu besar ({len(content) // (1024 * 1024)} MB). Batas: 200 MB.",
         )
 
     if len(content) == 0:
@@ -118,7 +118,7 @@ def export_table(
         table_names = [t[0] for t in tables_res]
         if table_name not in table_names:
             raise HTTPException(status_code=404, detail=f"Tabel '{table_name}' tidak ditemukan.")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e))
@@ -139,9 +139,7 @@ def export_table(
                 f'SELECT * FROM "{table_name}" LIMIT {safe_limit}'
             ).fetchall()
             for row in rows:
-                line = sep.join(
-                    "" if v is None else str(v).replace('"', '""') for v in row
-                )
+                line = sep.join("" if v is None else str(v).replace('"', '""') for v in row)
                 buf.write(line + "\n")
             content_bytes = buf.getvalue().encode("utf-8-sig")  # BOM untuk Excel compat
             media_type = "text/csv" if fmt == "csv" else "text/tab-separated-values"
@@ -156,7 +154,7 @@ def export_table(
             )
 
         elif fmt == "json":
-            import json  # noqa: PLC0415
+            import json
 
             rows = engine.conn.execute(
                 f'SELECT * FROM "{table_name}" LIMIT {safe_limit}'
@@ -175,15 +173,15 @@ def export_table(
             )
 
         elif fmt == "parquet":
-            import tempfile  # noqa: PLC0415
-            from pathlib import Path as _Path  # noqa: PLC0415
+            import tempfile
+            from pathlib import Path as _Path
 
             with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
                 tmp_path = _Path(tmp.name)
 
             try:
                 engine.conn.execute(
-                    f"COPY (SELECT * FROM \"{table_name}\" LIMIT {safe_limit}) "
+                    f'COPY (SELECT * FROM "{table_name}" LIMIT {safe_limit}) '
                     f"TO '{str(tmp_path).replace(chr(92), '/')}' (FORMAT PARQUET)"
                 )
                 content_bytes = tmp_path.read_bytes()
@@ -200,12 +198,10 @@ def export_table(
             )
 
         elif fmt == "xlsx":
-            import pandas as _pd  # noqa: PLC0415
+            import pandas as _pd
 
             max_excel = min(safe_limit, 1_048_576)
-            rows = engine.conn.execute(
-                f'SELECT * FROM "{table_name}" LIMIT {max_excel}'
-            ).fetchall()
+            rows = engine.conn.execute(f'SELECT * FROM "{table_name}" LIMIT {max_excel}').fetchall()
             desc = engine.conn.execute(f'DESCRIBE "{table_name}"').fetchall()
             cols = [d[0] for d in desc]
             df = _pd.DataFrame(rows, columns=cols)

@@ -6,15 +6,14 @@ Mendukung: catalog, schema, preview, read (streaming), write, explain.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
 
 from app.connectors.base import (
     Batch,
     Capabilities,
     CatalogNode,
     ColumnInfo,
-    Schema,
     ScanEstimate,
+    Schema,
     TableRef,
     TestResult,
     WriteMode,
@@ -66,7 +65,7 @@ class PostgresConnector:
         )
 
     def _connect(self):
-        import psycopg  # noqa: PLC0415
+        import psycopg
 
         conn = psycopg.connect(self._conninfo())
         if self.read_only:
@@ -78,7 +77,7 @@ class PostgresConnector:
     # ------------------------------------------------------------------
 
     def test(self) -> TestResult:
-        import time  # noqa: PLC0415
+        import time
 
         t0 = time.perf_counter()
         try:
@@ -167,7 +166,6 @@ class PostgresConnector:
             conn.close()
 
     def read(self, query: str, chunk_rows: int = 1000) -> Iterator[Batch]:
-        import psycopg  # noqa: PLC0415
 
         conn = self._connect()
         try:
@@ -187,7 +185,6 @@ class PostgresConnector:
             return WriteResult(
                 success=False, rows_written=0, message="Koneksi ini bersifat read-only."
             )
-        import psycopg  # noqa: PLC0415
 
         conn = self._connect()
         schema = ref.schema or "public"
@@ -202,9 +199,7 @@ class PostgresConnector:
 
             cols = ", ".join(f'"{c}"' for c in first_batch.columns)
             placeholders = ", ".join(["%s"] * len(first_batch.columns))
-            insert_sql = (
-                f'INSERT INTO "{schema}"."{ref.table}" ({cols}) VALUES ({placeholders})'
-            )
+            insert_sql = f'INSERT INTO "{schema}"."{ref.table}" ({cols}) VALUES ({placeholders})'
 
             with conn.cursor() as cur:
                 cur.executemany(insert_sql, [tuple(r) for r in first_batch.rows])
@@ -228,7 +223,7 @@ class PostgresConnector:
             row = conn.execute(explain_sql).fetchone()
             if not row:
                 return None
-            import json  # noqa: PLC0415
+            import json
 
             plan = json.loads(row[0])[0]["Plan"]
             rows = int(plan.get("Plan Rows", 0))

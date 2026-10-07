@@ -6,15 +6,14 @@ Mendukung: catalog, schema, preview, read, write, explain.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
 
 from app.connectors.base import (
     Batch,
     Capabilities,
     CatalogNode,
     ColumnInfo,
-    Schema,
     ScanEstimate,
+    Schema,
     TableRef,
     TestResult,
     WriteMode,
@@ -58,8 +57,8 @@ class MySQLConnector:
         self.connect_timeout = connect_timeout
 
     def _connect(self):
-        import pymysql  # noqa: PLC0415
-        import pymysql.cursors  # noqa: PLC0415
+        import pymysql
+        import pymysql.cursors
 
         conn = pymysql.connect(
             host=self.host,
@@ -77,7 +76,7 @@ class MySQLConnector:
         return conn
 
     def test(self) -> TestResult:
-        import time  # noqa: PLC0415
+        import time
 
         t0 = time.perf_counter()
         try:
@@ -156,7 +155,7 @@ class MySQLConnector:
             conn.close()
 
     def preview(self, ref: TableRef, limit: int = 100) -> Batch:
-        import pymysql.cursors  # noqa: PLC0415
+        import pymysql.cursors
 
         conn = self._connect()
         try:
@@ -171,7 +170,7 @@ class MySQLConnector:
             conn.close()
 
     def read(self, query: str, chunk_rows: int = 1000) -> Iterator[Batch]:
-        import pymysql.cursors  # noqa: PLC0415
+        import pymysql.cursors
 
         conn = self._connect()
         try:
@@ -189,7 +188,6 @@ class MySQLConnector:
     def write(self, ref: TableRef, batches: Iterator[Batch], mode: WriteMode) -> WriteResult:
         if self.read_only:
             return WriteResult(success=False, rows_written=0, message="Koneksi ini read-only.")
-        import pymysql.cursors  # noqa: PLC0415
 
         conn = self._connect()
         db = ref.database or self.database
@@ -231,7 +229,7 @@ class MySQLConnector:
                 row = cur.fetchone()
             if not row:
                 return None
-            import json  # noqa: PLC0415
+            import json
 
             plan_key = list(row.keys())[0]
             plan = json.loads(row[plan_key])
