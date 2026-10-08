@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+# ─────────────────────────────────────────────────────────────
+# Dockerfile.api — FastAPI + Python 3.12 (multi-stage)
+# Image: apps/api
+# ─────────────────────────────────────────────────────────────
+
+# Stage 1: Build & install deps via uv
+FROM python:3.12-slim AS builder
+WORKDIR /build
+
+# Install uv
+RUN pip install --no-cache-dir uv==0.4.27
+
+# Copy lockfiles first for cache
+COPY apps/api/pyproject.toml apps/api/uv.lock* ./
+RUN uv sync --frozen --no-dev
+
+# Stage 2: Runtime (non-root)
+FROM python:3.12-slim AS runner
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Non-root user
+RUN addgroup --system --gid 1001 apigroup && \
+    adduser --system --uid 1001 --ingroup apigroup apiuser
+
+# Copy virtual environment and application code
+COPY --from=builder /build/.venv /app/.venv
+COPY apps/api/app ./app
+
+# Runtime environment
+ENV PATH="/app/.venv/bin:$PATH"
+ENV WORKSPACE_DATA_DIR=/data/workspace
+
+# Create workspace directory owned by apiuser
+RUN mkdir -p /data/workspace /data/manifests && \
+    chown -R apiuser:apigroup /data
+
+USER apiuser
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+
+CMD ["/app/.venv/bin/fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]

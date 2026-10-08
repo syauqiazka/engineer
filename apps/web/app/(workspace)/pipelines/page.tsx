@@ -59,6 +59,9 @@ export default function PipelinesPage() {
   });
   const [selectedCodeTab, setSelectedCodeTab] = useState<"polars" | "sql" | "pandas">("polars");
   const [copied, setCopied] = useState(false);
+  const [showAirflowModal, setShowAirflowModal] = useState(false);
+  const [airflowCode, setAirflowCode] = useState("");
+  const [airflowFilename, setAirflowFilename] = useState("dag_pipeline.py");
 
   // Fetch Codegen
   useEffect(() => {
@@ -125,6 +128,30 @@ export default function PipelinesPage() {
               <span>Lihat sebagai kode</span>
             </button>
           </div>
+
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetchApi<{ code: string; filename: string }>("/airflow/export-pipeline", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    pipeline_name: "Bersihkan Data Transaksi",
+                    steps,
+                    cron_schedule: "0 2 * * *",
+                  }),
+                });
+                setAirflowCode(res.code);
+                setAirflowFilename(res.filename);
+                setShowAirflowModal(true);
+              } catch {
+                alert("Gagal mengekspor DAG Airflow");
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 h-[28px] text-[12px] font-semibold bg-[var(--surface)] border border-[var(--rule)] text-[var(--ink)] hover:bg-[var(--surface-sunk)] rounded-[2px] cursor-pointer"
+            title="Ekspor sebagai file DAG Apache Airflow"
+          >
+            <span>Ekspor Airflow</span>
+          </button>
 
           <button
             onClick={() => alert("Pipeline berhasil dijalankan di DuckDB! 7 baris dihasilkan.")}
@@ -235,6 +262,61 @@ export default function PipelinesPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Ekspor DAG Airflow */}
+      {showAirflowModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] shadow-2xl w-full max-w-3xl flex flex-col max-h-[85vh]">
+            <div className="p-3.5 border-b border-[var(--rule)] flex items-center justify-between bg-[var(--surface-sunk)]">
+              <h3 className="text-[14px] font-semibold text-[var(--ink)]">
+                Ekspor Pipeline ke Airflow DAG: <span className="font-mono text-[var(--action)]">{airflowFilename}</span>
+              </h3>
+              <button
+                onClick={() => setShowAirflowModal(false)}
+                className="text-[var(--ink-muted)] hover:text-[var(--ink)] text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-4 py-2 border-b border-[var(--rule)] flex items-center justify-between bg-[var(--surface)]">
+              <span className="text-[12px] text-[var(--ink-muted)]">
+                Jadwal: 02:00 WIB • Operator: BashOperator / DuckDB Runner
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(airflowCode);
+                    alert("Kode DAG Airflow berhasil disalin!");
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11.5px] bg-[var(--surface-sunk)] border border-[var(--rule)] rounded-[2px] text-[var(--ink)] cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Salin Kode
+                </button>
+                <button
+                  onClick={() => {
+                    const blob = new Blob([airflowCode], { type: "text/x-python" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = airflowFilename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="flex items-center gap-1 px-3 py-1 text-[11.5px] bg-[var(--action)] text-white font-medium rounded-[2px] cursor-pointer"
+                >
+                  Unduh .py
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-3 bg-[var(--surface-sunk)]">
+              <CodeViewer value={airflowCode} language="python" height="420px" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

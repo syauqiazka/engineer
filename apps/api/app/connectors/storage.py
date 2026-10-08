@@ -224,7 +224,7 @@ class StorageConnector:
         full_path = f"{ref.schema}/{ref.table}" if ref.schema else f"{base}/{ref.table}"
 
         all_rows = []
-        cols = []
+        cols: list[str] = []
         for batch in batches:
             if not cols:
                 cols = batch.columns

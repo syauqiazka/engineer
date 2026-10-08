@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+# ─────────────────────────────────────────────────────────────
+# Dockerfile.runner-jvm — Spark/Scala/Java JVM Runner
+# Based on OpenJDK 21 + Scala 2.13 + Spark 3.5
+# ─────────────────────────────────────────────────────────────
+
+FROM eclipse-temurin:21-jdk-jammy AS spark-builder
+WORKDIR /opt
+
+# Download Apache Spark 3.5.3 (Apache-2.0 License)
+ENV SPARK_VERSION=3.5.3
+ENV HADOOP_VERSION=3
+ENV SPARK_HOME=/opt/spark
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      wget curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN wget -q "https://downloads.apache.org/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" && \
+    tar xf "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" && \
+    mv "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}" spark && \
+    rm "spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz"
+
+# Install Scala 2.13 via sbt launcher (MIT license)
+ENV SCALA_VERSION=2.13.14
+RUN wget -q "https://github.com/scala/scala/releases/download/v${SCALA_VERSION}/scala-${SCALA_VERSION}.tgz" && \
+    tar xf "scala-${SCALA_VERSION}.tgz" && \
+    mv "scala-${SCALA_VERSION}" /opt/scala && \
+    rm "scala-${SCALA_VERSION}.tgz"
+
+# Stage 2: Runtime
+FROM eclipse-temurin:21-jre-jammy AS runner
+WORKDIR /app
+
+ENV SPARK_HOME=/opt/spark
+ENV SCALA_HOME=/opt/scala
+ENV PATH="${SPARK_HOME}/bin:${SCALA_HOME}/bin:${PATH}"
+ENV PYSPARK_PYTHON=python3
+
+# Install Python for PySpark
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-pip && \
+    pip3 install --no-cache-dir pyspark==3.5.3 && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=spark-builder /opt/spark /opt/spark
+COPY --from=spark-builder /opt/scala /opt/scala
+
+# Non-root user
+RUN addgroup --system --gid 1002 jvmgroup && \
+    adduser --system --uid 1002 --ingroup jvmgroup jvmuser
+
+RUN mkdir -p /tmp/spark-jobs /var/log/spark && \
+    chown -R jvmuser:jvmgroup /tmp/spark-jobs /var/log/spark
+
+USER jvmuser
+EXPOSE 7077 8080 4040
+
+HEALTHCHECK --interval=60s --timeout=15s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:8080 || exit 1
+
+CMD ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", \
+     "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]

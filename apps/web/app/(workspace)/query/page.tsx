@@ -12,6 +12,9 @@ import {
   Code2,
   FileCode,
   Sparkles,
+  Zap,
+  CheckCircle2,
+  Layers,
 } from "lucide-react";
 import { fetchApi } from "@/lib/api";
 import CodeEditor from "@/components/CodeEditor";
@@ -40,6 +43,17 @@ interface PythonExecutionResponse {
   error_message: string | null;
 }
 
+interface SparkJobResult {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  duration_seconds: number;
+  spark_app_id: string | null;
+  logs: string[];
+  output_summary: Record<string, unknown>;
+}
+
 const DEFAULT_SQL = `SELECT 
   kota,
   kategori,
@@ -65,26 +79,100 @@ ctx.log("Agregasi selesai. Menampilkan hasil:")
 ctx.display(agg)
 `;
 
+const DEFAULT_PYSPARK = `from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, sum, avg
+
+# Inisialisasi sesi Spark mandiri
+spark = SparkSession.builder \\
+    .appName("Workbench-PySpark-Job") \\
+    .master("local[*]") \\
+    .getOrCreate()
+
+print("==> Membaca data dan menghitung agregasi terdistribusi...")
+data = [
+    ("Jabodetabek", "Elektronik", 15, 4500000.0),
+    ("Bandung", "Pakaian", 42, 2100000.0),
+    ("Surabaya", "Makanan", 80, 1600000.0),
+    ("Jabodetabek", "Pakaian", 33, 1980000.0),
+]
+df = spark.createDataFrame(data, ["wilayah", "kategori", "jumlah_unit", "total_nilai"])
+
+hasil = df.groupBy("wilayah").agg(
+    sum("total_nilai").alias("omset_total"),
+    avg("jumlah_unit").alias("rata_rata_unit")
+).orderBy(col("omset_total").desc())
+
+hasil.show()
+spark.stop()
+`;
+
+const DEFAULT_SCALA = `package com.engineer.workbench
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions._
+
+object DataPipelineJob {
+  def main(args: Array[String]): Unit = {
+    val spark = SparkSession.builder()
+      .appName("Workbench-Scala-Pipeline")
+      .master("local[*]")
+      .getOrCreate()
+
+    import spark.implicits._
+
+    val transactions = Seq(
+      ("TRX-001", "Pelanggan-A", 125000.0, "Jakarta"),
+      ("TRX-002", "Pelanggan-B", 450000.0, "Surabaya"),
+    ).toDF("id_transaksi", "pelanggan", "nominal", "kota")
+
+    transactions
+      .groupBy("kota")
+      .agg(count("id_transaksi").as("jumlah_trx"), sum("nominal").as("total_belanja"))
+      .show()
+
+    spark.stop()
+  }
+}
+`;
+
+const DEFAULT_JAVA = `package com.engineer.workbench;
+
+import org.apache.spark.sql.*;
+import org.apache.spark.sql.types.*;
+import java.util.*;
+
+public class JavaDataProcessor {
+    public static void main(String[] args) {
+        SparkSession spark = SparkSession.builder()
+                .appName("Workbench-Java-Spark")
+                .master("local[*]")
+                .getOrCreate();
+
+        List<Row> rows = Arrays.asList(
+                RowFactory.create("K-01", 120.5),
+                RowFactory.create("K-02", 84.0)
+        );
+        StructType schema = new StructType(new StructField[]{
+                new StructField("kategori", DataTypes.StringType, false, Metadata.empty()),
+                new StructField("nilai", DataTypes.DoubleType, false, Metadata.empty())
+        });
+
+        spark.createDataFrame(rows, schema).groupBy("kategori").sum("nilai").show();
+        spark.stop();
+    }
+}
+`;
+
 const PYTHON_TEMPLATES = [
-  {
-    name: "Agregasi Omzet (Polars)",
-    code: DEFAULT_PYTHON,
-  },
+  { name: "Agregasi Omzet (Polars)", code: DEFAULT_PYTHON },
   {
     name: "Filter & Simpan Tabel Baru (Polars)",
     code: `import polars as pl
 
-# Baca pesanan
 df = ctx.read_table("pesanan_harian", engine="polars")
-
-# Filter pesanan yang belum lunas
 pending = df.filter(pl.col("status_bayar") != "Lunas")
 ctx.log(f"Ditemukan {len(pending)} pesanan yang butuh tindak lanjut.")
-
-# Tulis tabel baru ke DuckDB workspace
 ctx.write_table("pesanan_belum_lunas", pending)
-ctx.log("Tabel 'pesanan_belum_lunas' berhasil dibuat di workspace!")
-
 ctx.display(pending)
 `,
   },
@@ -92,32 +180,33 @@ ctx.display(pending)
     name: "Analisis Statistik Cepat (pandas)",
     code: `import pandas as pd
 
-# Baca data ke DataFrame pandas
 df = ctx.read_table("pesanan_harian", engine="pandas")
-
-ctx.log("--- Ringkasan Statistik Kolom total_harga ---")
 ctx.log(df["total_harga"].describe().to_string())
-
-# Tambah kolom rasio nilai
-avg_val = df["total_harga"].mean()
-df["rasio_ke_rata2"] = (df["total_harga"] / avg_val).round(2)
-
+df["rasio_ke_rata2"] = (df["total_harga"] / df["total_harga"].mean()).round(2)
 ctx.display(df)
 `,
   },
 ];
 
+type ActiveTab = "sql" | "python" | "pyspark" | "scala" | "java";
+
 export default function QueryPage() {
-  const [activeTab, setActiveTab] = useState<"sql" | "python">("sql");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("sql");
   const [sql, setSql] = useState<string>(DEFAULT_SQL);
   const [pythonCode, setPythonCode] = useState<string>(DEFAULT_PYTHON);
+  const [pysparkCode, setPysparkCode] = useState<string>(DEFAULT_PYSPARK);
+  const [scalaCode, setScalaCode] = useState<string>(DEFAULT_SCALA);
+  const [javaCode, setJavaCode] = useState<string>(DEFAULT_JAVA);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Results
   const [sqlResult, setSqlResult] = useState<QueryResult | null>(null);
   const [pyResult, setPyResult] = useState<PythonExecutionResponse | null>(null);
+  const [sparkResult, setSparkResult] = useState<SparkJobResult | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const isSparkTab = activeTab === "pyspark" || activeTab === "scala" || activeTab === "java";
 
   const handleRunSQL = useCallback(
     async (sqlToRun?: string) => {
@@ -125,7 +214,6 @@ export default function QueryPage() {
       if (!query.trim()) return;
       setLoading(true);
       setError(null);
-
       try {
         const data = await fetchApi<QueryResult>("/query", {
           method: "POST",
@@ -133,8 +221,7 @@ export default function QueryPage() {
         });
         setSqlResult(data);
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg || "Gagal mengeksekusi kueri SQL");
+        setError(err instanceof Error ? err.message : "Gagal mengeksekusi kueri SQL");
       } finally {
         setLoading(false);
       }
@@ -148,19 +235,15 @@ export default function QueryPage() {
       if (!code.trim()) return;
       setLoading(true);
       setError(null);
-
       try {
         const data = await fetchApi<PythonExecutionResponse>("/runner/python", {
           method: "POST",
           body: JSON.stringify({ code }),
         });
         setPyResult(data);
-        if (!data.success && data.error_message) {
-          setError(data.error_message);
-        }
+        if (!data.success && data.error_message) setError(data.error_message);
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg || "Gagal menjalankan skrip Python");
+        setError(err instanceof Error ? err.message : "Gagal menjalankan skrip Python");
       } finally {
         setLoading(false);
       }
@@ -168,12 +251,46 @@ export default function QueryPage() {
     [pythonCode]
   );
 
-  const handleRunCurrent = () => {
-    if (activeTab === "sql") {
-      handleRunSQL();
-    } else {
-      handleRunPython();
+  const handleSubmitToSpark = useCallback(async () => {
+    const langCodeMap: Record<string, string> = {
+      pyspark: pysparkCode,
+      scala: scalaCode,
+      java: javaCode,
+    };
+    const langMap: Record<string, string> = {
+      pyspark: "pyspark",
+      scala: "scala",
+      java: "java",
+    };
+    const code = langCodeMap[activeTab] || "";
+    if (!code.trim()) return;
+    setLoading(true);
+    setError(null);
+    setSparkResult(null);
+    try {
+      const res = await fetch("http://localhost:8000/api/spark/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `Editor ${activeTab.toUpperCase()} Job`,
+          language: langMap[activeTab],
+          code,
+        }),
+      });
+      if (!res.ok) throw new Error("Gagal mengirim job ke Spark runner.");
+      const data = await res.json();
+      setSparkResult(data.job as SparkJobResult);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Gagal menghubungi Spark backend.");
+    } finally {
+      setLoading(false);
     }
+  }, [activeTab, pysparkCode, scalaCode, javaCode]);
+
+  const handleRunCurrent = () => {
+    if (activeTab === "sql") handleRunSQL();
+    else if (activeTab === "python") handleRunPython();
+    else handleSubmitToSpark();
   };
 
   const handleExportResult = useCallback(
@@ -197,9 +314,7 @@ export default function QueryPage() {
       const body = rows
         .map((row) =>
           row
-            .map((v) =>
-              v === null ? "" : fmt === "json" ? v : `"${String(v).replace(/"/g, '""')}"`
-            )
+            .map((v) => (v === null ? "" : fmt === "json" ? v : `"${String(v).replace(/"/g, '""')}"`))
             .join(sep)
         )
         .join("\n");
@@ -209,9 +324,7 @@ export default function QueryPage() {
       let filename: string;
 
       if (fmt === "json") {
-        const records = rows.map((row) =>
-          Object.fromEntries(columns.map((c, i) => [c, row[i]]))
-        );
+        const records = rows.map((row) => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
         content = JSON.stringify(records, null, 2);
         mimeType = "application/json";
         filename = "query_result.json";
@@ -234,7 +347,6 @@ export default function QueryPage() {
     [activeTab, sqlResult, pyResult]
   );
 
-  // Ubah preview python ke format GridColumn jika ada
   const pythonGridData = React.useMemo(() => {
     if (!pyResult?.output_preview) return null;
     const { columns, types, rows } = pyResult.output_preview;
@@ -257,33 +369,60 @@ export default function QueryPage() {
     [sqlResult]
   );
 
+  const getCurrentCode = () => {
+    if (activeTab === "sql") return sql;
+    if (activeTab === "python") return pythonCode;
+    if (activeTab === "pyspark") return pysparkCode;
+    if (activeTab === "scala") return scalaCode;
+    if (activeTab === "java") return javaCode;
+    return "";
+  };
+
+  const setCurrentCode = (code: string) => {
+    if (activeTab === "sql") setSql(code);
+    else if (activeTab === "python") setPythonCode(code);
+    else if (activeTab === "pyspark") setPysparkCode(code);
+    else if (activeTab === "scala") setScalaCode(code);
+    else if (activeTab === "java") setJavaCode(code);
+  };
+
+  const editorLang: "sql" | "python" | "text" =
+    activeTab === "scala" || activeTab === "java"
+      ? "text"
+      : activeTab === "pyspark"
+      ? "python"
+      : activeTab === "sql"
+      ? "sql"
+      : "python";
+
+  const tabs: { id: ActiveTab; label: string; color: string; icon: React.ReactNode }[] = [
+    { id: "sql", label: "SQL (DuckDB)", color: "var(--action)", icon: <Database className="w-3.5 h-3.5" /> },
+    { id: "python", label: "Python (Polars)", color: "var(--success)", icon: <Code2 className="w-3.5 h-3.5" /> },
+    { id: "pyspark", label: "PySpark", color: "#f97316", icon: <Zap className="w-3.5 h-3.5" /> },
+    { id: "scala", label: "Scala (Spark)", color: "#dc2626", icon: <Layers className="w-3.5 h-3.5" /> },
+    { id: "java", label: "Java (Spark)", color: "#7c3aed", icon: <FileCode className="w-3.5 h-3.5" /> },
+  ];
+
   return (
     <div className="flex flex-col h-full gap-3">
       {/* Top Bar with Language Tabs & Action Controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--rule)] pb-2">
-        <div className="flex items-center gap-1 bg-[var(--surface-sunk)] p-0.5 rounded-[3px] border border-[var(--rule)]">
-          <button
-            onClick={() => setActiveTab("sql")}
-            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold rounded-[2px] transition-colors ${
-              activeTab === "sql"
-                ? "bg-[var(--surface)] text-[var(--ink)] shadow-sm"
-                : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
-            }`}
-          >
-            <Database className="w-3.5 h-3.5 text-[var(--action)]" />
-            SQL (DuckDB)
-          </button>
-          <button
-            onClick={() => setActiveTab("python")}
-            className={`flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold rounded-[2px] transition-colors ${
-              activeTab === "python"
-                ? "bg-[var(--surface)] text-[var(--ink)] shadow-sm"
-                : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
-            }`}
-          >
-            <Code2 className="w-3.5 h-3.5 text-[var(--success)]" />
-            Python (Polars Sandbox)
-          </button>
+        <div className="flex items-center gap-1 bg-[var(--surface-sunk)] p-0.5 rounded-[3px] border border-[var(--rule)] flex-wrap">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={activeTab === tab.id ? { color: tab.color } : undefined}
+              className={`flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold rounded-[2px] transition-colors ${
+                activeTab === tab.id
+                  ? "bg-[var(--surface)] shadow-sm"
+                  : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Action Controls */}
@@ -295,7 +434,7 @@ export default function QueryPage() {
                 <span>Contoh Kode</span>
                 <ChevronDown className="w-3 h-3 text-[var(--ink-muted)]" />
               </button>
-              <div className="absolute right-0 top-full mt-1 w-56 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg hidden group-hover:block z-20 py-1">
+              <div className="absolute right-0 top-full mt-1 w-60 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg hidden group-hover:block z-20 py-1">
                 {PYTHON_TEMPLATES.map((tmpl, idx) => (
                   <button
                     key={idx}
@@ -309,75 +448,79 @@ export default function QueryPage() {
             </div>
           )}
 
-          {/* Export button */}
-          {((activeTab === "sql" && sqlResult) || (activeTab === "python" && pyResult?.output_preview)) && (
-            <div className="relative">
-              <button
-                onClick={() => setShowExportMenu((v) => !v)}
-                className="flex items-center gap-1 px-2.5 py-1 text-[12px] bg-[var(--surface)] border border-[var(--rule)] hover:bg-[var(--surface-sunk)] text-[var(--ink)] rounded-[2px]"
-              >
-                <Download className="w-3.5 h-3.5 text-[var(--ink-muted)]" />
-                <span>Ekspor</span>
-                <ChevronDown className="w-3 h-3 text-[var(--ink-muted)]" />
-              </button>
-              {showExportMenu && (
-                <div className="absolute right-0 top-full mt-1 w-32 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg z-20 py-1">
-                  <button
-                    onClick={() => handleExportResult("csv")}
-                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
-                  >
-                    CSV (.csv)
-                  </button>
-                  <button
-                    onClick={() => handleExportResult("tsv")}
-                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
-                  >
-                    TSV (.tsv)
-                  </button>
-                  <button
-                    onClick={() => handleExportResult("json")}
-                    className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
-                  >
-                    JSON (.json)
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Export button — only for SQL/Python */}
+          {!isSparkTab &&
+            ((activeTab === "sql" && sqlResult) ||
+              (activeTab === "python" && pyResult?.output_preview)) && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowExportMenu((v) => !v)}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[12px] bg-[var(--surface)] border border-[var(--rule)] hover:bg-[var(--surface-sunk)] text-[var(--ink)] rounded-[2px]"
+                >
+                  <Download className="w-3.5 h-3.5 text-[var(--ink-muted)]" />
+                  <span>Ekspor</span>
+                  <ChevronDown className="w-3 h-3 text-[var(--ink-muted)]" />
+                </button>
+                {showExportMenu && (
+                  <div className="absolute right-0 top-full mt-1 w-32 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] shadow-lg z-20 py-1">
+                    {["csv", "tsv", "json"].map((fmt) => (
+                      <button
+                        key={fmt}
+                        onClick={() => handleExportResult(fmt)}
+                        className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-[var(--surface-sunk)] text-[var(--ink)]"
+                      >
+                        {fmt.toUpperCase()} (.{fmt})
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
-          {/* Run button */}
+          {/* Run / Send to Spark button */}
           <button
             onClick={handleRunCurrent}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3.5 py-1 text-[12px] font-semibold bg-[var(--action)] text-white hover:bg-[var(--action-hover)] disabled:opacity-50 rounded-[2px] transition-colors"
+            className="flex items-center gap-1.5 px-3.5 py-1 text-[12px] font-semibold bg-[var(--action)] text-white hover:opacity-90 disabled:opacity-50 rounded-[2px] transition-colors"
           >
-            <Play className={`w-3.5 h-3.5 fill-white ${loading ? "animate-spin" : ""}`} />
-            {loading ? "Menjalankan..." : "Jalankan (Ctrl+Enter)"}
+            {isSparkTab ? (
+              <>
+                <Zap className={`w-3.5 h-3.5 fill-white ${loading ? "animate-pulse" : ""}`} />
+                {loading ? "Mengirim ke Spark..." : "Kirim ke Spark"}
+              </>
+            ) : (
+              <>
+                <Play className={`w-3.5 h-3.5 fill-white ${loading ? "animate-spin" : ""}`} />
+                {loading ? "Menjalankan..." : "Jalankan (Ctrl+Enter)"}
+              </>
+            )}
           </button>
         </div>
       </div>
 
+      {/* Spark badge info */}
+      {isSparkTab && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--surface)] border border-[var(--rule)] rounded-[3px] text-[12px]">
+          <Zap className="w-3.5 h-3.5 text-orange-500" />
+          <span className="text-[var(--ink)]">
+            Kode akan dikirim ke{" "}
+            <strong>Spark Standalone Runner (JVM Worker)</strong>. Pastikan Spark Master aktif di{" "}
+            <code className="font-mono text-[var(--action)]">spark://localhost:7077</code> atau mode lokal.
+          </span>
+        </div>
+      )}
+
       {/* Editor Frame */}
       <div className="border border-[var(--rule)] rounded-[3px] overflow-hidden bg-[var(--surface-sunk)]">
-        {activeTab === "sql" ? (
-          <CodeEditor
-            value={sql}
-            onChange={setSql}
-            language="sql"
-            height="180px"
-            onRun={handleRunSQL}
-            placeholder="Tulis kueri SQL di sini..."
-          />
-        ) : (
-          <CodeEditor
-            value={pythonCode}
-            onChange={setPythonCode}
-            language="python"
-            height="210px"
-            onRun={handleRunPython}
-            placeholder="Tulis skrip Python dengan ctx.read_table('tabel'), Polars/pandas di sini..."
-          />
-        )}
+        <CodeEditor
+          key={activeTab}
+          value={getCurrentCode()}
+          onChange={setCurrentCode}
+          language={editorLang}
+          height={isSparkTab ? "240px" : activeTab === "python" ? "210px" : "180px"}
+          onRun={handleRunCurrent}
+          placeholder={`Tulis kode ${activeTab} di sini...`}
+        />
       </div>
 
       {/* Error banner */}
@@ -388,7 +531,7 @@ export default function QueryPage() {
         </div>
       )}
 
-      {/* Python Terminal Log Output (if present) */}
+      {/* Python Terminal Log Output */}
       {activeTab === "python" && pyResult && (
         <div className="bg-[#0b0d13] border border-[var(--rule)] rounded-[3px] p-2.5 font-mono text-[11px] text-[#cbd5e1] flex flex-col gap-1 max-h-36 overflow-y-auto">
           <div className="flex items-center justify-between text-[10px] text-[#64748b] border-b border-[#1e293b] pb-1">
@@ -410,66 +553,116 @@ export default function QueryPage() {
         </div>
       )}
 
-      {/* Result Metrics & Data Grid */}
-      <div className="flex-1 flex flex-col min-h-0 border border-[var(--rule)] rounded-[3px] overflow-hidden bg-[var(--surface)]">
-        {/* Result Header Info */}
-        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-sunk)] border-b border-[var(--rule)] text-[11px] text-[var(--ink-muted)]">
-          <div className="flex items-center gap-3">
-            <span className="font-semibold text-[var(--ink)]">Hasil Eksekusi</span>
-            {activeTab === "sql" && sqlResult && (
-              <>
-                <span>{sqlResult.total_rows.toLocaleString()} baris</span>
-                <span>•</span>
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> {sqlResult.execution_time_ms} ms
-                </span>
-              </>
-            )}
-            {activeTab === "python" && pythonGridData && (
-              <>
-                <span>{pythonGridData.total} baris DataFrame</span>
-                <span>•</span>
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> {pyResult?.duration_ms} ms
-                </span>
-              </>
-            )}
+      {/* Spark Job Execution Log */}
+      {isSparkTab && sparkResult && (
+        <div className="bg-[#0b0d13] border border-[var(--rule)] rounded-[3px] overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#1e293b] text-[11px]">
+            <div className="flex items-center gap-2 font-mono text-[#94a3b8]">
+              <Zap className="w-3 h-3 text-orange-400" />
+              <span>Spark Job: {sparkResult.id}</span>
+              <span>•</span>
+              <span>{sparkResult.spark_app_id}</span>
+              <span>•</span>
+              <span>{sparkResult.duration_seconds}s</span>
+            </div>
+            <span
+              className={`px-2 py-0.5 text-[10px] font-bold rounded-[2px] ${
+                sparkResult.status === "success"
+                  ? "bg-green-900/60 text-green-400"
+                  : sparkResult.status === "failed"
+                  ? "bg-red-900/60 text-red-400"
+                  : sparkResult.status === "cancelled"
+                  ? "bg-yellow-900/60 text-yellow-400"
+                  : "bg-blue-900/60 text-blue-400"
+              }`}
+            >
+              {sparkResult.status.toUpperCase()}
+            </span>
           </div>
-        </div>
-
-        {/* Grid Content */}
-        <div className="flex-1 overflow-auto">
-          {activeTab === "sql" ? (
-            sqlResult ? (
-              <DataGrid
-                columns={sqlGridColumns}
-                rows={sqlResult.rows}
-                totalRows={sqlResult.total_rows}
-              />
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
-                <Database className="w-8 h-8 opacity-30 mb-2" />
-                <p className="text-[13px]">Kueri SQL belum dijalankan.</p>
-                <p className="text-[11px]">Tekan Ctrl+Enter atau tombol Jalankan untuk melihat data.</p>
+          <div className="p-3 font-mono text-[11px] text-[#cbd5e1] max-h-48 overflow-y-auto space-y-0.5">
+            {sparkResult.logs.map((line, i) => (
+              <div key={i} className={line.startsWith("+") ? "text-[#4ade80]" : line.includes("[SUCCESS]") ? "text-green-400" : line.includes("[STAGE") ? "text-orange-300" : "text-[#94a3b8]"}>
+                {line}
               </div>
-            )
-          ) : pythonGridData ? (
-            <DataGrid
-              columns={pythonGridData.columns}
-              rows={pythonGridData.rows}
-              totalRows={pythonGridData.total}
-            />
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
-              <FileCode className="w-8 h-8 opacity-30 mb-2" />
-              <p className="text-[13px]">Skrip Python belum dijalankan.</p>
-              <p className="text-[11px]">
-                Gunakan <code className="bg-[var(--surface-sunk)] px-1 py-0.5 rounded text-[var(--action)]">ctx.display(df)</code> untuk menampilkan DataFrame di grid ini.
-              </p>
+            ))}
+          </div>
+          {sparkResult.status === "success" && Object.keys(sparkResult.output_summary).length > 0 && (
+            <div className="px-3 py-2 border-t border-[#1e293b] flex items-center gap-4 text-[11px] text-[#64748b]">
+              <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+              {Object.entries(sparkResult.output_summary).map(([k, v]) => (
+                <span key={k}>
+                  <span className="text-[#94a3b8]">{k}:</span>{" "}
+                  <span className="font-mono text-[#e2e8f0]">{String(v)}</span>
+                </span>
+              ))}
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {/* Result Area — SQL & Python only */}
+      {!isSparkTab && (
+        <div className="flex-1 flex flex-col min-h-0 border border-[var(--rule)] rounded-[3px] overflow-hidden bg-[var(--surface)]">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-sunk)] border-b border-[var(--rule)] text-[11px] text-[var(--ink-muted)]">
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-[var(--ink)]">Hasil Eksekusi</span>
+              {activeTab === "sql" && sqlResult && (
+                <>
+                  <span>{sqlResult.total_rows.toLocaleString()} baris</span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> {sqlResult.execution_time_ms} ms
+                  </span>
+                </>
+              )}
+              {activeTab === "python" && pythonGridData && (
+                <>
+                  <span>{pythonGridData.total} baris DataFrame</span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> {pyResult?.duration_ms} ms
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto">
+            {activeTab === "sql" ? (
+              sqlResult ? (
+                <DataGrid columns={sqlGridColumns} rows={sqlResult.rows} totalRows={sqlResult.total_rows} />
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
+                  <Database className="w-8 h-8 opacity-30 mb-2" />
+                  <p className="text-[13px]">Kueri SQL belum dijalankan.</p>
+                  <p className="text-[11px]">Tekan Ctrl+Enter atau tombol Jalankan untuk melihat data.</p>
+                </div>
+              )
+            ) : pythonGridData ? (
+              <DataGrid columns={pythonGridData.columns} rows={pythonGridData.rows} totalRows={pythonGridData.total} />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)]">
+                <FileCode className="w-8 h-8 opacity-30 mb-2" />
+                <p className="text-[13px]">Skrip Python belum dijalankan.</p>
+                <p className="text-[11px]">
+                  Gunakan{" "}
+                  <code className="bg-[var(--surface-sunk)] px-1 py-0.5 rounded text-[var(--action)]">ctx.display(df)</code>{" "}
+                  untuk menampilkan DataFrame di grid ini.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Spark empty state */}
+      {isSparkTab && !sparkResult && !loading && (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[var(--ink-muted)] border border-[var(--rule)] rounded-[3px] bg-[var(--surface)]">
+          <Zap className="w-8 h-8 opacity-30 mb-2 text-orange-500" />
+          <p className="text-[13px]">Job Spark belum dikirim.</p>
+          <p className="text-[11px]">Tulis kode {activeTab.toUpperCase()} dan tekan <strong>Kirim ke Spark</strong>.</p>
+        </div>
+      )}
     </div>
   );
 }

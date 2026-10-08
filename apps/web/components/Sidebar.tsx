@@ -15,6 +15,8 @@ import {
   ShieldCheck,
   Cable,
   Settings,
+  Database,
+  Activity,
   ChevronLeft,
   ChevronRight,
   Pin,
@@ -61,6 +63,8 @@ export function Sidebar() {
         { name: "Sumber", href: "/sources", icon: FolderInput },
         { name: "Tabel", href: "/tables", icon: TableIcon },
         { name: "Kueri", href: "/query", icon: Terminal },
+        { name: "Gudang data", href: "/warehouse", icon: Database },
+        { name: "Stream", href: "/stream", icon: Activity },
       ],
     },
     {

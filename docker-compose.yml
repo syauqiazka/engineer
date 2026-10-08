@@ -1,47 +1,239 @@
+# ─────────────────────────────────────────────────────────────
+# Data Engineer Workbench — Docker Compose
+# Self-hosted, zero vendor lock-in, 100% free open-source stack
+#
+# Usage:
+#   docker compose up --build                            # core stack
+#   docker compose --profile sources up                  # + postgres + mysql/mariadb + minio (S3-compat)
+#   docker compose --profile stream up                   # + kafka KRaft
+#   docker compose --profile spark up                    # + spark master + worker
+#   docker compose --profile sources --profile stream up # all sumber + streaming
+# ─────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
+  # ────────────────────────────────────
+  # Core: Web (Next.js)
+  # ────────────────────────────────────
   web:
     build:
-      context: ./apps/web
-      dockerfile: ../../docker/Dockerfile.web
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: engineer-web:latest
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-    volumes:
-      - ./apps/web:/app
-      - /app/node_modules
-      - /app/.next
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: http://api:8000
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
 
+  # ────────────────────────────────────
+  # Core: API (FastAPI)
+  # ────────────────────────────────────
   api:
     build:
-      context: ./apps/api
-      dockerfile: ../../docker/Dockerfile.api
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: engineer-api:latest
     ports:
       - "8000:8000"
     environment:
-      - APP_ENV=development
-      - DATABASE_URL=postgresql://engineer:engineer@postgres:5432/engineer_app
-      - WORKSPACE_DIR=/workspace
+      APP_ENV: production
+      DATABASE_URL: postgresql://engineer:engineer@postgres:5432/engineer_app
+      WORKSPACE_DATA_DIR: /data/workspace
+      SECRET_KEY: "changeme_in_production_use_docker_secret"
     volumes:
-      - ./apps/api:/app
-      - ./workspace_data:/workspace
+      - workspace_data:/data/workspace
+      - warehouse_data:/data/manifests
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
 
+  # ────────────────────────────────────
+  # Core: Worker (Python Job Runner)
+  # ────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    image: engineer-worker:latest
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://engineer:engineer@postgres:5432/engineer_app
+      WORKSPACE_DATA_DIR: /data/workspace
+    volumes:
+      - workspace_data:/data/workspace
+      - warehouse_data:/data/manifests
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ────────────────────────────────────
+  # Core: PostgreSQL App Store
+  # ────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=engineer
-      - POSTGRES_PASSWORD=engineer
-      - POSTGRES_DATABASE=engineer_app
+      POSTGRES_USER: engineer
+      POSTGRES_PASSWORD: engineer
+      POSTGRES_DB: engineer_app
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engineer -d engineer_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ────────────────────────────────────
+  # Profile: sources — Additional test/dev databases
+  # docker compose --profile sources up
+  # ────────────────────────────────────
+  mysql:
+    image: mysql:8.4
+    profiles: [sources]
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_USER: engineer
+      MYSQL_PASSWORD: engineer
+      MYSQL_DATABASE: engineer_src
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+    logging: *default-logging
+
+  # MinIO — S3-compatible self-hosted object storage (Apache-2.0)
+  minio:
+    image: minio/minio:latest
+    profiles: [sources]
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web console
+    volumes:
+      - miniodata:/data
+    logging: *default-logging
+
+  # ────────────────────────────────────
+  # Profile: stream — Kafka KRaft (self-hosted, Apache-2.0)
+  # docker compose --profile stream up
+  # ────────────────────────────────────
+  kafka:
+    image: apache/kafka:3.9.0
+    profiles: [stream]
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+      CLUSTER_ID: "engineer-kafka-cluster-01"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  # ────────────────────────────────────
+  # Profile: spark — Apache Spark Standalone (Apache-2.0)
+  # docker compose --profile spark up
+  # ────────────────────────────────────
+  spark-master:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner-jvm
+    image: engineer-runner-jvm:latest
+    profiles: [spark]
+    environment:
+      SPARK_MODE: master
+      SPARK_MASTER_HOST: spark-master
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+    ports:
+      - "7077:7077"  # Spark Master RPC
+      - "8080:8080"  # Web UI
+    volumes:
+      - spark_logs:/var/log/spark
+    restart: unless-stopped
+    logging: *default-logging
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runner-jvm
+    image: engineer-runner-jvm:latest
+    profiles: [spark]
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_CORES: "4"
+      SPARK_WORKER_MEMORY: "4G"
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - spark_logs:/var/log/spark
+    restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   pgdata:
+    driver: local
+  workspace_data:
+    driver: local
+  warehouse_data:
+    driver: local
+  mysqldata:
+    driver: local
+  miniodata:
+    driver: local
+  kafkadata:
+    driver: local
+  spark_logs:
+    driver: local

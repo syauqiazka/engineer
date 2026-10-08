@@ -97,6 +97,43 @@ def build_connector(config: ConnectionConfig, password: str = "") -> Any:
     elif kind == "files":
         raise ValueError("Konektor file diinstansiasi langsung via FileConnector, bukan registry.")
 
+    elif kind == "clickhouse":
+        from app.connectors.clickhouse import ClickHouseConnector
+
+        return ClickHouseConnector(
+            host=config.host or "localhost",
+            port=config.port or 8123,
+            database=config.database or "default",
+            username=config.username or "default",
+            password=password,
+            read_only=config.read_only,
+        )
+
+    elif kind == "cassandra":
+        from app.connectors.cassandra import CassandraConnector
+
+        return CassandraConnector(
+            host=config.host or "localhost",
+            port=config.port or 9042,
+            keyspace=config.database or "default",
+            username=config.username,
+            password=password,
+            read_only=config.read_only,
+        )
+
+    elif kind == "kafka":
+        from app.connectors.kafka import KafkaConnector
+
+        return KafkaConnector(
+            bootstrap_servers=config.host
+            if ":" in config.host
+            else (
+                f"{config.host}:{config.port}" if config.port else (config.host or "localhost:9092")
+            ),
+            client_id=config.username or "workbench-stream-client",
+            read_only=config.read_only,
+        )
+
     elif kind == "duckdb":
 
         class _DuckDBConnector:
@@ -135,6 +172,12 @@ KIND_CAPABILITIES: dict[str, Capabilities] = {
     ),
     "sqlite": Capabilities(
         supports_sql=True, supports_write=True, supports_pushdown=True, supports_explain=False
+    ),
+    "clickhouse": Capabilities(
+        supports_sql=True, supports_write=True, supports_pushdown=True, supports_explain=True
+    ),
+    "cassandra": Capabilities(
+        supports_sql=False, supports_write=True, supports_pushdown=False, has_schema=True
     ),
     "duckdb": Capabilities(supports_sql=True, supports_write=True, supports_pushdown=True),
     "files": Capabilities(supports_sql=False, supports_write=False),

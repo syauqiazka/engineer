@@ -311,6 +311,39 @@ export default function WorkflowsPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const [showAirflowModal, setShowAirflowModal] = useState(false);
+  const [airflowDagCode, setAirflowDagCode] = useState("");
+  const [airflowFileName, setAirflowFileName] = useState("dag_workflow.py");
+
+  const handleExportAirflow = async () => {
+    if (!activeWf) return;
+    try {
+      const res = await fetchApi<{ code: string; filename: string }>("/airflow/export-workflow", {
+        method: "POST",
+        body: JSON.stringify({
+          workflow_name: activeWf.name,
+          nodes,
+          edges,
+        }),
+      });
+      setAirflowDagCode(res.code);
+      setAirflowFileName(res.filename);
+      setShowAirflowModal(true);
+    } catch {
+      alert("Gagal mengekspor DAG Airflow");
+    }
+  };
+
+  const downloadAirflowDag = () => {
+    const blob = new Blob([airflowDagCode], { type: "text/x-python" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = airflowFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex flex-col h-full gap-2">
       {/* Workflow Header Toolbar */}
@@ -328,6 +361,15 @@ export default function WorkflowsPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportAirflow}
+            className="flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold bg-[var(--surface)] border border-[var(--rule)] text-[var(--ink)] hover:bg-[var(--surface-sunk)] rounded-[2px]"
+            title="Ekspor sebagai file DAG Apache Airflow"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[var(--action)]" />
+            Ekspor DAG Airflow
+          </button>
+
           <button
             onClick={handleOpenCodegen}
             className="flex items-center gap-1.5 px-3 py-1 text-[12px] font-semibold bg-[var(--surface)] border border-[var(--rule)] text-[var(--ink)] hover:bg-[var(--surface-sunk)] rounded-[2px]"
@@ -438,6 +480,56 @@ export default function WorkflowsPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Ekspor DAG Airflow */}
+      {showAirflowModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--surface)] border border-[var(--rule)] rounded-[2px] shadow-2xl w-full max-w-3xl flex flex-col max-h-[85vh]">
+            <div className="p-3.5 border-b border-[var(--rule)] flex items-center justify-between bg-[var(--surface-sunk)]">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[var(--action)]" />
+                <h3 className="text-[14px] font-semibold text-[var(--ink)]">
+                  Ekspor ke Apache Airflow DAG: <span className="font-mono text-[var(--action)]">{airflowFileName}</span>
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAirflowModal(false)}
+                className="text-[var(--ink-muted)] hover:text-[var(--ink)] text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-4 py-2 border-b border-[var(--rule)] flex items-center justify-between bg-[var(--surface)]">
+              <span className="text-[12px] text-[var(--ink-muted)]">
+                Script Python standar Airflow dengan dependensi graf node dan zona waktu Asia/Jakarta (WIB).
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(airflowDagCode);
+                    alert("Kode DAG berhasil disalin!");
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11.5px] bg-[var(--surface-sunk)] border border-[var(--rule)] hover:bg-[var(--surface)] rounded-[2px] text-[var(--ink)] cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Salin Kode
+                </button>
+                <button
+                  onClick={downloadAirflowDag}
+                  className="flex items-center gap-1 px-3 py-1 text-[11.5px] bg-[var(--action)] text-white hover:opacity-90 rounded-[2px] font-medium cursor-pointer"
+                >
+                  Unduh .py
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-3 bg-[var(--surface-sunk)]">
+              <CodeViewer value={airflowDagCode} language="python" height="420px" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

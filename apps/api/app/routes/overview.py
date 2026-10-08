@@ -79,7 +79,7 @@ def get_overview_data():
                 name="orders_daily",
                 time="02:00 WIB",
                 reason="Kolom `tanggal` gagal diubah ke date: 31 baris berformat DD/MM/YYYY",
-                target_link="/runs/run-9482",
+                target_link="/runs",
             ),
             AttentionItem(
                 id="att-2",
@@ -262,6 +262,20 @@ def get_overview_data():
                 environment="dev",
                 status="online",
                 latency_ms=0.3,
+            ),
+            ConnectionItem(
+                name="clickhouse_analytics",
+                kind="clickhouse",
+                environment="staging",
+                status="online",
+                latency_ms=8.5,
+            ),
+            ConnectionItem(
+                name="cassandra_iot",
+                kind="cassandra",
+                environment="dev",
+                status="online",
+                latency_ms=6.2,
             ),
             ConnectionItem(
                 name="stream_events",

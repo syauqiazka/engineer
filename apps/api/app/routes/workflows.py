@@ -33,7 +33,7 @@ class WorkflowNode(BaseModel):
     type: str  # source, transform_sql, filter, python, quality_assert, destination
     label: str
     data: dict[str, Any] = Field(default_factory=dict)
-    position: dict[str, float] = Field(default_factory=lambda: {"x": 100, "y": 100})
+    position: dict[str, float] = Field(default_factory=lambda: {"x": 100.0, "y": 100.0})
 
 
 class WorkflowEdge(BaseModel):

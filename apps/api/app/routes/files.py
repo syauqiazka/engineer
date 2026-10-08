@@ -205,9 +205,9 @@ def export_table(
             desc = engine.conn.execute(f'DESCRIBE "{table_name}"').fetchall()
             cols = [d[0] for d in desc]
             df = _pd.DataFrame(rows, columns=cols)
-            buf = io.BytesIO()
-            df.to_excel(buf, index=False, engine="openpyxl")
-            content_bytes = buf.getvalue()
+            excel_buf = io.BytesIO()
+            df.to_excel(excel_buf, index=False, engine="openpyxl")
+            content_bytes = excel_buf.getvalue()
             return StreamingResponse(
                 iter([content_bytes]),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
